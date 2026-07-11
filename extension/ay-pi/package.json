@@ -1,0 +1,13 @@
+{
+  "name": "ay-pi",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AY-PI: Pi için deterministic, CPU-first model/thinking routing extension'ı",
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.3"
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  }
+}

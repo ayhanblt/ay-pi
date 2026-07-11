@@ -1,0 +1,143 @@
+{
+  "settings": {
+    "diffLinesEscalationThreshold": 60
+  },
+  "routes": [
+    {
+      "intent": "/plan",
+      "rules": [
+        {
+          "when": {
+            "subcommand": "==/brainstorm"
+          },
+          "provider": "opencode-go",
+          "pool": [
+            "glm-5.2",
+            "qwen3.7-max"
+          ],
+          "thinking": "high",
+          "contextBudget": {
+            "maxFiles": 8,
+            "maxChars": 60000
+          },
+          "constraints": [
+            "no_code_output"
+          ],
+          "output": {
+            "maxTokens": 2500
+          }
+        },
+        {
+          "provider": "opencode-go",
+          "pool": [
+            "glm-5.2",
+            "qwen3.7-max"
+          ],
+          "thinking": "medium",
+          "contextBudget": {
+            "maxFiles": 5,
+            "maxChars": 40000
+          },
+          "constraints": [
+            "no_code_output"
+          ],
+          "output": {
+            "maxTokens": 1500
+          }
+        }
+      ]
+    },
+    {
+      "intent": "/code",
+      "rules": [
+        {
+          "when": {
+            "subcommand": "==/quick"
+          },
+          "provider": "opencode-go",
+          "pool": [
+            "deepseek-v4-flash",
+            "minimax-m2.7",
+            "mimo-v2.5"
+          ],
+          "thinking": "low",
+          "contextBudget": {
+            "maxFiles": 2,
+            "maxChars": 15000
+          },
+          "constraints": [
+            "no_refactor",
+            "no_comments",
+            "code_only",
+            "scope_limited"
+          ],
+          "allowedTools": ["read", "edit"],
+          "output": {
+            "maxTokens": 300
+          }
+        },
+        {
+          "provider": "opencode-go",
+          "pool": [
+            "kimi-k2.7-code",
+            "deepseek-v4-pro",
+            "minimax-m3"
+          ],
+          "thinking": "medium",
+          "contextBudget": {
+            "maxFiles": 6,
+            "maxChars": 60000
+          },
+          "constraints": [
+            "code_only"
+          ],
+          "output": {
+            "maxTokens": 1500
+          }
+        }
+      ]
+    },
+    {
+      "intent": "/chat",
+      "rules": [
+        {
+          "when": {
+            "textCategory": "==deep"
+          },
+          "provider": "opencode-go",
+          "pool": [
+            "kimi-k2.7-code",
+            "deepseek-v4-pro",
+            "minimax-m3"
+          ],
+          "thinking": "medium",
+          "contextBudget": {
+            "maxFiles": 3,
+            "maxChars": 20000
+          },
+          "constraints": [],
+          "output": {
+            "maxTokens": 1200
+          }
+        },
+        {
+          "provider": "opencode-go",
+          "pool": [
+            "deepseek-v4-flash",
+            "minimax-m2.7",
+            "mimo-v2.5"
+          ],
+          "thinking": "off",
+          "contextBudget": {
+            "maxFiles": 1,
+            "maxChars": 5000
+          },
+          "constraints": [],
+          "output": {
+            "maxTokens": 500
+          }
+        }
+      ]
+    }
+  ]
+}
