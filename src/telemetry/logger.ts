@@ -26,6 +26,8 @@ export interface TelemetryEntry {
   signal: RequestSignal;
   workflow: WorkflowObject;
   execution?: ExecutionResult;
+  appliedModel?: string;
+  appliedThinking?: string;
 }
 
 const LOG_PATH = new URL("../../ay-pi.telemetry.jsonl", import.meta.url).pathname;
@@ -37,13 +39,17 @@ const LOG_PATH = new URL("../../ay-pi.telemetry.jsonl", import.meta.url).pathnam
 export function logDecision(
   signal: RequestSignal,
   workflow: WorkflowObject,
-  execution?: ExecutionResult
+  execution?: ExecutionResult,
+  appliedModel?: string,
+  appliedThinking?: string
 ): void {
   const entry: TelemetryEntry = {
     timestamp: new Date().toISOString(),
     signal,
     workflow,
     execution,
+    appliedModel,
+    appliedThinking,
   };
   appendFileSync(LOG_PATH, JSON.stringify(entry) + "\n", "utf-8");
 }

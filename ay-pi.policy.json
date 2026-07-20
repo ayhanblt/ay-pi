@@ -1,6 +1,7 @@
 {
   "settings": {
-    "diffLinesEscalationThreshold": 60
+    "diffLinesEscalationThreshold": 60,
+    "diffLinesEscalationIntents": ["/code", "/plan"]
   },
   "routes": [
     {

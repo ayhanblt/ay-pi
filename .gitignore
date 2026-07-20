@@ -1,8 +1,15 @@
 # Ignore node_modules
-
 /node_modules
 /extension/ay-pi/node_modules
 
-
+# Environment variables
 /.env
+
+# Telemetry
+/ay-pi.telemetry.*
+
+# Build artifacts
+/dist
+/build
+/.DS_Store
 

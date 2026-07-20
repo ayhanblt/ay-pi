@@ -43,7 +43,7 @@ const CONSTRAINT_TEXT: Record<Constraint, string> = {
   scope_limited:
     "SADECE aşağıda 'İlgili dosyalar' bölümünde verilen dosyalara bak. " +
     "Aradığın şey bu dosyalarda yoksa, başka dosya arama veya tüm projeyi " +
-    "tarama -- bunun yerine hangi dosyayı kastettiğimi sor.",
+    "tarama -- bunun yerine hangi dosyayı kastettiğimi sor. Kesinlikle bir dizine (klasöre) 'read' veya benzeri araçlar uygulamaya ÇALIŞMA.",
 };
 
 export interface AssembledFile {

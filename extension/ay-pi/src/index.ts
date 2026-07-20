@@ -25,14 +25,14 @@
  *      ile paylaşılan)
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { execSync } from "node:child_process";
 
 // DİKKAT: bunlar Faz 0-1'de yazdığımız, HİÇ DEĞİŞTİRİLMEMİŞ paylaşılan
 // çekirdek modüller. Repo kökündeki src/'den import ediliyorlar --
 // extension paketinin kendi içinde bir KOPYASI YOK (bkz. README, "neden
 // kopyalamadık" bölümü).
-import { buildSignal, route } from "../../../src/router/index.js";
+import { buildSignal, route, detectIntent } from "../../../src/router/index.js";
 import type { PolicyFile } from "../../../src/router/types.js";
 import { loadPolicies } from "../../../src/config/policy.loader.js";
 import { selectFiles } from "../../../src/context/assembler.js";
@@ -44,6 +44,7 @@ import {
 import { buildPrompt } from "../../../src/prompt/builder.js";
 import { logDecision } from "../../../src/telemetry/logger.js";
 import { ALL_TOOLS } from "../../../src/workflow/types.js";
+import { detectMisplacedCliCommand } from "../../../src/router/cliCommandGuard.js";
 
 // Policy dosyası repo kökünde yaşıyor (dev-tools ile PAYLAŞILAN, tek bir
 // karar tablosu -- iki ayrı kopya bakımı istemiyoruz).
@@ -82,7 +83,76 @@ function detectDiffLinesFromGit(cwd: string): number | undefined {
   }
 }
 
+/**
+ * Bir SessionEntry'nin (Pi'nin gerçek session formatı, doğrulanmış:
+ * @earendil-works/pi-ai'daki UserMessage tipi) içinden kullanıcı mesajının
+ * DÜZ METNİNİ çıkarır. content ya çıplak bir string ya da
+ * {type:"text",text:...} bloklarından oluşan bir dizi olabilir.
+ * Kullanıcı mesajı değilse (assistant/toolResult/custom vb.) null döner.
+ */
+function extractUserMessageText(message: unknown): string | null {
+  if (typeof message !== "object" || message === null) return null;
+  const m = message as { role?: unknown; content?: unknown };
+  if (m.role !== "user") return null;
+  if (typeof m.content === "string") return m.content;
+  if (Array.isArray(m.content)) {
+    const textParts = m.content
+      .filter((c): c is { type: "text"; text: string } => c?.type === "text")
+      .map((c) => c.text);
+    return textParts.length > 0 ? textParts.join("\n") : null;
+  }
+  return null;
+}
+
+/**
+ * Pi session'ının GERÇEK geçmişinden (ctx.sessionManager.getEntries())
+ * bir önceki kullanıcı mesajını bulup, onun intent'ini (detectIntent ile,
+ * bizim kendi saf fonksiyonumuzla) döner. Bulamazsa null -- sticky routing
+ * o zaman devreye girmez, normal akış işler (bkz. stickyRouting.ts).
+ *
+ * "Bir önceki" derken: şu anki mesajla (rawText) AYNI olan en son user
+ * entry'sini atlıyoruz -- çünkü before_agent_start tetiklendiğinde mevcut
+ * mesaj session'a zaten eklenmiş olabilir, onu "önceki" saymamalıyız.
+ */
+function getPreviousIntent(ctx: ExtensionContext, rawText: string): string | null {
+  try {
+    const entries = ctx.sessionManager.getEntries();
+    let skippedCurrent = false;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.type !== "message") continue;
+      const text = extractUserMessageText((entry as { message?: unknown }).message);
+      if (text === null) continue;
+      if (!skippedCurrent && text.trim() === rawText.trim()) {
+        skippedCurrent = true;
+        continue;
+      }
+      return detectIntent(text);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ayPi(pi: ExtensionAPI) {
+  pi.on("input", async (event, ctx: ExtensionContext) => {
+    if (event.source !== "interactive") return { action: "continue" };
+
+    const misplaced = detectMisplacedCliCommand(event.text);
+    if (misplaced) {
+      ctx.ui.notify(
+        `"${misplaced}" bir terminal komutudur, Pi sohbet kutusuna değil ` +
+        `gerçek bir terminale yazılmalı. Yeni bir terminal sekmesi açıp ` +
+        `orada "${misplaced}" çalıştır.`,
+        "info"
+      );
+      return { action: "handled" };
+    }
+
+    return { action: "continue" };
+  });
+
   // GEÇİCİ DEBUG: extension'ın gerçekten yüklenip yüklenmediğini görmek için.
   // Pi'yi açtığında bu bildirimi görmüyorsan, sorun before_agent_start
   // mantığında değil -- extension hiç YÜKLENMİYOR demektir (yol/manifest
@@ -97,7 +167,8 @@ export default function ayPi(pi: ExtensionAPI) {
 
     // --- 1) RequestSignal inşa et (gerçek proje dizininde git diff) ---
     const diffLines = detectDiffLinesFromGit(ctx.cwd);
-    const signal = buildSignal(rawText, { diffLines });
+    const previousIntent = getPreviousIntent(ctx, rawText);
+    const signal = buildSignal(rawText, { diffLines }, previousIntent);
 
     // --- 2) Router karar versin ---
     const policy = getPolicy();
@@ -106,26 +177,39 @@ export default function ayPi(pi: ExtensionAPI) {
     // --- 3) Pi'nin KENDİ model/thinking mekanizmasını yönlendir ---
     // Not: burada kendi HTTP çağrımızı ATMIYORUZ -- pi.setModel() sonrası
     // gerçek isteği Pi'nin pi-ai katmanı yapacak.
-    const model = ctx.modelRegistry.find(workflow.provider, workflow.modelPool[0]);
-    if (model) {
-      const applied = await pi.setModel(model);
-      if (!applied) {
-        ctx.ui.notify(
-          `AY-PI: "${workflow.provider}/${workflow.modelPool[0]}" için API key bulunamadı. ` +
-          `Pi ayarlarına OPENCODE_API_KEY eklemen gerekebilir.`,
-          "warning"
-        );
+    let appliedModelInfo: string | undefined;
+    let modelApplied = false;
+
+    for (const modelId of workflow.modelPool) {
+      const model = ctx.modelRegistry.find(workflow.provider, modelId);
+      if (model) {
+        const applied = await pi.setModel(model);
+        if (applied) {
+          modelApplied = true;
+          appliedModelInfo = modelId;
+          break;
+        }
       }
-    } else {
-      // Model Pi'nin kataloğunda hiç yok -- policy dosyasında yazım hatası
-      // olabilir, ya da provider Pi'ye hiç tanıtılmamış olabilir.
+    }
+
+    if (!modelApplied) {
       ctx.ui.notify(
-        `AY-PI: "${workflow.provider}/${workflow.modelPool[0]}" modeli Pi'nin ` +
-        `kataloğunda bulunamadı. ay-pi.policy.json'daki model adını kontrol et.`,
+        `AY-PI: Belirtilen model havuzundaki hiçbir model (${workflow.modelPool.join(", ")}) bulunamadı veya uygulanamadı. Mevcut model değiştirilmedi.`,
         "error"
       );
     }
     pi.setThinkingLevel(workflow.thinking);
+
+    const appliedThinking = pi.getThinkingLevel();
+    const appliedModelObj = ctx.model;
+    const appliedModelId = appliedModelObj ? appliedModelObj.id : undefined;
+
+    if (appliedThinking !== workflow.thinking) {
+      ctx.ui.notify(
+        `AY-PI: '${workflow.thinking}' istendi ama model '${appliedThinking}' seviyesinde çalışıyor.`,
+        "info"
+      );
+    }
 
     // --- 3b) Araç erişimini WorkflowObject.allowedTools'a göre sınırla ---
     // Bu, "modele bırakırsak kontrolsüz keşif yapıp tüm projeyi tarayabilir"
@@ -151,16 +235,15 @@ export default function ayPi(pi: ExtensionAPI) {
         ? ` (araçlar: ${workflow.allowedTools.join(",")})`
         : "";
 
-
     ctx.ui.setStatus(
       "ay-pi",
-      `AY-PI: ${workflow.provider}/${workflow.modelPool[0]} · ${workflow.thinking}` +
+      `AY-PI: ${workflow.provider}/${appliedModelInfo ?? workflow.modelPool[0]} · ${appliedThinking}` +
       (workflow.meta.diffLinesEscalationApplied ? " (↑ diffLines eşiği aşıldı)" : "") +
       toolsNote
     );
 
     // --- 6) Telemetry (aynı JSONL, dev-tools ile paylaşılan) ---
-    logDecision(signal, workflow);
+    logDecision(signal, workflow, undefined, appliedModelId, appliedThinking);
 
     // --- 7) Constraint'leri systemPrompt'a, dosya içeriğini message'a enjekte et ---
     // systemPrompt TAM DEĞİŞTİRME semantiğinde (Pi #575) -- bu yüzden
@@ -179,5 +262,26 @@ export default function ayPi(pi: ExtensionAPI) {
     }
 
     return result;
+  });
+
+  pi.registerCommand("ay-pi-status", {
+    description: "AY-PI policy dosyasını ve son kararları göster (LLM çağrısı yapmaz)",
+    handler: async (args, commandCtx: ExtensionCommandContext) => {
+      const policy = getPolicy();
+      const ruleCount = policy.routes.reduce((acc, r) => acc + r.rules.length, 0);
+      commandCtx.ui.notify(
+        `AY-PI Aktif.\nPolicy: ${policy.routes.length} intent, ${ruleCount} rule yüklü.\nLoglar: ay-pi.telemetry.jsonl`,
+        "info"
+      );
+    },
+  });
+
+  pi.registerCommand("ay-pi-reload-policy", {
+    description: "AY-PI policy dosyasını yeniden yükle (LLM çağrısı yapmaz)",
+    handler: async (args, commandCtx: ExtensionCommandContext) => {
+      cachedPolicy = null;
+      getPolicy();
+      commandCtx.ui.notify("AY-PI: Policy cache temizlendi ve dosya yeniden yüklendi.", "info");
+    },
   });
 }

@@ -72,7 +72,7 @@ export interface RequestSignal {
   // "/code" gibi açık komut olmayan serbest metinler için: mesaj basit bir
   // sohbet mi ("chat"), derin düşünme gerektiren bir soru mu ("deep"), yoksa
   // ikisi de net değil mi ("uncertain")? textClassifier.ts tarafından, hibrit
-  // (keyword + bag-of-words) bir yöntemle, tamamen CPU'da hesaplanır.
+  // (keyword eşleşmesi) bir yöntemle, tamamen CPU'da hesaplanır.
   textCategory?: "chat" | "deep" | "uncertain";
 
   // "/code /quick fix typo" -> command="/code", subcommand="/quick"
@@ -130,6 +130,10 @@ export interface PolicySettings {
   // yukarı çıkarır. Havuzu (pool) ASLA değiştirmez. Bkz. router/index.ts
   // -> escalateThinking().
   diffLinesEscalationThreshold: number;
+  // diffLines escalation'ının SADECE bu intent listesindeki komutlarda
+  // uygulanacağını belirtir. Listede olmayan bir intent (örn. "/chat")
+  // için diffLines ne olursa olsun thinking ASLA escalate edilmez.
+  diffLinesEscalationIntents: string[];
 }
 
 /** ay-pi.policy.json dosyasının TAM şekli -- policy.loader.ts bunu döndürür. */

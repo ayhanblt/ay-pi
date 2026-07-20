@@ -71,6 +71,8 @@ export function detectQuickKeyword(rawText: string): boolean {
   return keywords.some((k) => lower.includes(k));
 }
 
+import { detectStickyCodeIntent } from "./stickyRouting.js";
+
 /**
  * Ham metinden ve (varsa) dışarıdan gelen ek sinyallerden (diffLines gibi,
  * git'ten hesaplanan) TAM bir RequestSignal inşa eder. Bu, "ham metin
@@ -79,13 +81,26 @@ export function detectQuickKeyword(rawText: string): boolean {
  *
  * textCategory SADECE command === "/chat" ise hesaplanır: /code, /plan
  * gibi açık komutlarda intent zaten netleşmiştir, sınıflandırıcıyı
- * (bag-of-words dahil) gereksiz yere çalıştırmayız.
+ * gereksiz yere çalıştırmayız.
+ *
+ * previousIntent: Pi session'ından okunan ÖNCEKİ turun intent'i (örn.
+ * "/plan"). Sadece "yapışkan routing" (sticky routing) için kullanılır --
+ * bkz. stickyRouting.ts. dev-tools/cli.ts gibi session'sız ortamlarda
+ * bu parametre hiç verilmez (varsayılan null), sticky routing devreye
+ * girmez -- bu KASITLI bir davranış farkı, bug değil.
  */
 export function buildSignal(
   rawText: string,
-  overrides: Partial<Pick<RequestSignal, "diffLines" | "changedFileCount" | "openFileCount">> = {}
+  overrides: Partial<Pick<RequestSignal, "diffLines" | "changedFileCount" | "openFileCount">> = {},
+  previousIntent: string | null = null
 ): RequestSignal {
-  const command = detectIntent(rawText);
+  let command = detectIntent(rawText);
+
+  const sticky = detectStickyCodeIntent(rawText, command, previousIntent);
+  if (sticky) {
+    command = sticky;
+  }
+
   const signal: RequestSignal = {
     command,
     rawText,
@@ -144,7 +159,9 @@ export function route(signal: RequestSignal, policyFile: PolicyFile): WorkflowOb
 
   const threshold = policyFile.settings.diffLinesEscalationThreshold;
   const shouldEscalate =
-    signal.diffLines !== undefined && signal.diffLines >= threshold;
+    signal.diffLines !== undefined &&
+    signal.diffLines >= threshold &&
+    policyFile.settings.diffLinesEscalationIntents.includes(signal.command);
   const finalThinking = shouldEscalate ? escalateThinking(rule.thinking) : rule.thinking;
 
   return {

@@ -1,15 +1,12 @@
 /**
- * KEYWORDS.TS — Katman 1: Kesin eşleşme (en hızlı, en güvenilir katman)
+ * KEYWORDS.TS — Katman 1: Kesin eşleşme (tek sınıflandırma katmanı)
  * -----------------------------------------------------------------
  * Buradaki kelimelerden biri mesajda geçiyorsa, sınıflandırma kararı
- * HEMEN verilir -- bag-of-words'e (Katman 2) hiç gerek kalmaz. Bu liste
- * "kesin sinyal" niteliğinde kelimeler içermeli; belirsiz/çok anlamlı
- * kelimeleri buraya EKLEME, onlar bag-of-words'e bırakılır.
- *
- * Neden ayrı bir katman: bag-of-words istatistiksel bir tahmin yürütür,
- * ama "selam" gibi %100 kesin bir kelime için istatistiğe gerek yok --
- * gereksiz hesaplama + potansiyel yanlış sınıflandırma riski. Kesin
- * olduğun yerde kesin ol, belirsiz olduğun yerde istatistiğe geç.
+ * HEMEN verilir. Eşleşme yoksa "uncertain" (belirsiz) sayılır ve ucuz
+ * tarafa düşülür -- bkz. textClassifier.ts. Bu liste "kesin sinyal"
+ * niteliğinde kelimeler içermeli; belirsiz/çok anlamlı kelimeleri buraya
+ * eklemekten kaçın (yanlış eşleşme riski, bkz. containsKeyword()'daki
+ * kelime sınırı notu).
  */
 
 export const CHAT_KEYWORDS = [
