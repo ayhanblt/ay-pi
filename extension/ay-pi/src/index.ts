@@ -32,7 +32,7 @@ import { execSync } from "node:child_process";
 // çekirdek modüller. Repo kökündeki src/'den import ediliyorlar --
 // extension paketinin kendi içinde bir KOPYASI YOK (bkz. README, "neden
 // kopyalamadık" bölümü).
-import { buildSignal, route, detectIntent } from "../../../src/router/index.js";
+import { buildSignal, route } from "../../../src/router/index.js";
 import type { PolicyFile } from "../../../src/router/types.js";
 import { loadPolicies } from "../../../src/config/policy.loader.js";
 import { selectFiles } from "../../../src/context/assembler.js";
@@ -84,56 +84,14 @@ function detectDiffLinesFromGit(cwd: string): number | undefined {
 }
 
 /**
- * Bir SessionEntry'nin (Pi'nin gerçek session formatı, doğrulanmış:
- * @earendil-works/pi-ai'daki UserMessage tipi) içinden kullanıcı mesajının
- * DÜZ METNİNİ çıkarır. content ya çıplak bir string ya da
- * {type:"text",text:...} bloklarından oluşan bir dizi olabilir.
- * Kullanıcı mesajı değilse (assistant/toolResult/custom vb.) null döner.
+ * Önceki turun intent'ini tutan basit bir modül-seviyesi değişken (tıpkı
+ * yukarıdaki cachedPolicy gibi). Pi'nin session geçmişini okumak yerine
+ * (karmaşık AgentMessage tip navigasyonu gerektiriyordu) bunu tercih
+ * ettik -- kişisel/tekli oturum kullanımı için yeterli ve çok daha basit.
+ * Her `before_agent_start` turunun sonunda (buildSignal çağrısından hemen
+ * sonra) güncellenir.
  */
-function extractUserMessageText(message: unknown): string | null {
-  if (typeof message !== "object" || message === null) return null;
-  const m = message as { role?: unknown; content?: unknown };
-  if (m.role !== "user") return null;
-  if (typeof m.content === "string") return m.content;
-  if (Array.isArray(m.content)) {
-    const textParts = m.content
-      .filter((c): c is { type: "text"; text: string } => c?.type === "text")
-      .map((c) => c.text);
-    return textParts.length > 0 ? textParts.join("\n") : null;
-  }
-  return null;
-}
-
-/**
- * Pi session'ının GERÇEK geçmişinden (ctx.sessionManager.getEntries())
- * bir önceki kullanıcı mesajını bulup, onun intent'ini (detectIntent ile,
- * bizim kendi saf fonksiyonumuzla) döner. Bulamazsa null -- sticky routing
- * o zaman devreye girmez, normal akış işler (bkz. stickyRouting.ts).
- *
- * "Bir önceki" derken: şu anki mesajla (rawText) AYNI olan en son user
- * entry'sini atlıyoruz -- çünkü before_agent_start tetiklendiğinde mevcut
- * mesaj session'a zaten eklenmiş olabilir, onu "önceki" saymamalıyız.
- */
-function getPreviousIntent(ctx: ExtensionContext, rawText: string): string | null {
-  try {
-    const entries = ctx.sessionManager.getEntries();
-    let skippedCurrent = false;
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (entry.type !== "message") continue;
-      const text = extractUserMessageText((entry as { message?: unknown }).message);
-      if (text === null) continue;
-      if (!skippedCurrent && text.trim() === rawText.trim()) {
-        skippedCurrent = true;
-        continue;
-      }
-      return detectIntent(text);
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+let lastIntent: string | null = null;
 
 export default function ayPi(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx: ExtensionContext) => {
@@ -167,8 +125,8 @@ export default function ayPi(pi: ExtensionAPI) {
 
     // --- 1) RequestSignal inşa et (gerçek proje dizininde git diff) ---
     const diffLines = detectDiffLinesFromGit(ctx.cwd);
-    const previousIntent = getPreviousIntent(ctx, rawText);
-    const signal = buildSignal(rawText, { diffLines }, previousIntent);
+    const signal = buildSignal(rawText, { diffLines }, lastIntent);
+    lastIntent = signal.command;
 
     // --- 2) Router karar versin ---
     const policy = getPolicy();
