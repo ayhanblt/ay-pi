@@ -1,14 +1,38 @@
 {
   "name": "ay-pi",
   "version": "1.0.0",
-  "private": true,
+  "description": "Deterministic, CPU-first model/thinking routing extension for Pi",
   "type": "module",
-  "description": "AY-PI: Pi için deterministic, CPU-first model/thinking routing extension'ı",
+  "main": "./dist/index.js",
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "router",
+    "model-routing"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayhanblt/ay-pi.git",
+    "directory": "extension/ay-pi"
+  },
+  "files": [
+    "dist",
+    "ay-pi.policy.json",
+    "package.json"
+  ],
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.3",
     "zod": "^4.4.3"
   },
-  "pi": {
-    "extensions": ["./src/index.ts"]
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.3"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/pi-coding-agent --outfile=dist/index.js"
   }
 }
