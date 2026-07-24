@@ -1,12 +1,8 @@
 /**
- * CLI-COMMAND-GUARD.TS
- * ----------------------
- * Bazı metinler ("pi update" gibi) aslında Pi'nin kendi CLI komutları --
- * sohbet kutusuna değil, gerçek bir terminale yazılmalı. Bu dosya, böyle
- * bir metin tespit edilirse (Pi-agnostik, saf regex/string eşleştirmesiyle)
- * kullanıcıya gösterilecek yönlendirme mesajını üretir. LLM çağrısı YAPMAZ,
- * Pi'yi import ETMEZ -- extension bunu "input" event'inde çağırıp sonucu
- * kullanır.
+ * CLI COMMAND GUARD
+ * -----------------
+ * Detects shell CLI commands typed inadvertently into the agent chat prompt (e.g. `pi update`).
+ * Pure deterministic pattern matching without external SDK dependencies.
  */
 
 interface CliOnlyCommand {
@@ -21,6 +17,9 @@ const CLI_ONLY_COMMANDS: CliOnlyCommand[] = [
   { pattern: /^pi\s+login(\s|$)/i, displayName: "pi login" },
 ];
 
+/**
+ * Returns the matching command name if `rawText` represents a CLI command; otherwise returns `null`.
+ */
 export function detectMisplacedCliCommand(rawText: string): string | null {
   const trimmed = rawText.trim();
   for (const cmd of CLI_ONLY_COMMANDS) {
@@ -30,3 +29,4 @@ export function detectMisplacedCliCommand(rawText: string): string | null {
   }
   return null;
 }
+

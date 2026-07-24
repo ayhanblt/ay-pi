@@ -1,17 +1,11 @@
 /**
- * CALIBRATION-REPORT.TS
- * ------------------------
- * ay-pi.telemetry.jsonl dosyasını okuyup, her model için "istenen thinking
- * seviyesi" ile "gerçekte uygulanan seviye" arasındaki farkı özetler.
+ * CALIBRATION REPORT GENERATOR
+ * ============================
+ * Reads `ay-pi.telemetry.jsonl` and aggregates discrepancies between requested
+ * thinking levels and actual applied thinking levels across models.
  *
- * NEDEN VAR: gerçek kullanımda GLM-5.2'ye "medium" istediğimizde "high"
- * uygulandığını gördük (Pi'nin clamp mekanizması, bkz. sohbet geçmişi).
- * Bu script, böyle uyuşmazlıkları TAHMİN etmek yerine gerçek veriden
- * bulup, ay-pi.policy.json'daki thinking değerlerini modellerin GERÇEK
- * kapasitesine göre kalibre etmeni sağlıyor.
- *
- * Çalıştırma: npx tsx dev-tools/calibration-report.ts [telemetry-dosya-yolu]
- * (yol verilmezse repo kökündeki ay-pi.telemetry.jsonl kullanılır)
+ * Usage:
+ *   npx tsx dev-tools/calibration-report.ts [telemetry-file-path]
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -25,7 +19,7 @@ interface TelemetryLine {
 function main() {
   const path = process.argv[2] ?? new URL("../ay-pi.telemetry.jsonl", import.meta.url).pathname;
   if (!existsSync(path)) {
-    console.error(`Telemetry dosyası bulunamadı: ${path}`);
+    console.error(`Telemetry file not found: ${path}`);
     process.exit(1);
   }
 
@@ -57,13 +51,11 @@ function main() {
   }
 
   console.log(
-    `\n${lines.length} kayıt okundu, ${skipped} tanesi atlandı ` +
-    `(appliedThinking yok -- --execute ile ya da extension üzerinden ` +
-    `gerçekten çalıştırılmamış kararlar).\n`
+    `\nParsed ${lines.length} entries (${skipped} skipped due to missing appliedThinking).\n`
   );
 
   if (stats.size === 0) {
-    console.log("Hiç kalibre edilebilir veri yok. Extension'ı gerçek Pi'de birkaç kez kullanıp tekrar dene.");
+    console.log("No calibration data found. Execute sessions via Pi or CLI with --execute to populate telemetry.");
     return;
   }
 
@@ -74,11 +66,12 @@ function main() {
         .map(([applied, count]) => `${applied}×${count}`)
         .join(", ");
       const mismatch = [...byApplied.keys()].some((a) => a !== requested);
-      const flag = mismatch ? "  ⚠️  UYUŞMUYOR -- policy.json'da bu modelin thinking değerini gözden geçir" : "";
-      console.log(`  istenen="${requested}" -> uygulanan: ${parts}${flag}`);
+      const flag = mismatch ? "  ⚠️  MISMATCH -- review thinking settings in policy.json for this model" : "";
+      console.log(`  requested="${requested}" -> applied: ${parts}${flag}`);
     }
     console.log("");
   }
 }
 
 main();
+

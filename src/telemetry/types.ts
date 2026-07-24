@@ -1,15 +1,9 @@
 /**
- * TELEMETRY/TYPES.TS
- * --------------------
- * ExecutionResult BURADA tanımlı (executor/'da DEĞİL) çünkü telemetry
- * PAYLAŞILAN ÇEKİRDEĞİN bir parçası (hem dev-tools/cli.ts hem de Faz 2'de
- * extension/ay-pi/src/index.ts kullanacak), ama gerçek API çağrısını yapan
- * Executor SADECE dev-tools'ta yaşıyor (bkz. dev-tools/executor/).
- *
- * Eğer bu tip executor/'da tanımlı olsaydı, paylaşılan çekirdek (src/)
- * test-amaçlı bir araca (dev-tools/) bağımlı olurdu -- bu, katman
- * sırasını tersine çevirir. Bu yüzden tip burada, executor sadece bunu
- * import ediyor.
+ * TELEMETRY TYPES
+ * ---------------
+ * Defines telemetry data structures. ExecutionResult is specified here in the
+ * shared core because telemetry logging is utilized across both the test CLI
+ * (`dev-tools/cli.ts`) and the Pi extension (`extension/ay-pi/src/index.ts`).
  */
 
 export interface ExecutionUsage {
@@ -19,9 +13,10 @@ export interface ExecutionUsage {
 
 export interface ExecutionResult {
   success: boolean;
-  content?: string;          // model cevabının metni (başarılıysa)
-  errorMessage?: string;      // hata mesajı (başarısızsa)
-  httpStatus?: number;        // API'den dönen HTTP durum kodu (varsa)
-  durationMs: number;         // isteğin ne kadar sürdüğü
-  usage?: ExecutionUsage;     // API'nin bildirdiği token kullanımı (varsa)
+  content?: string;          // Model response text (if successful)
+  errorMessage?: string;      // Error message (if unsuccessful)
+  httpStatus?: number;        // HTTP status code returned by the API (if available)
+  durationMs: number;         // Total request execution duration in milliseconds
+  usage?: ExecutionUsage;     // Reported token usage metrics (if provided by API)
 }
+

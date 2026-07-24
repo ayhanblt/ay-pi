@@ -1,30 +1,21 @@
 /**
- * RULES.TS
- * ---------
- * Bu dosyada TEK sorumluluk var: bir RouteRule'un "when" koşulunu,
- * elimizdeki RequestSignal'e göre true/false olarak değerlendirmek.
- *
- * Burası pipeline'ın "CPU-first, deterministic" prensibini somutlaştıran
- * yerdir: hiçbir network çağrısı, hiçbir LLM isteği yok. Sadece sayısal
- * karşılaştırma. Bu yüzden test yazması da çok kolay (girdi -> beklenen
- * çıktı, hep aynı sonucu verir).
+ * RULES
+ * -----
+ * Evaluates `RouteRule` `when` expressions against a `RequestSignal`.
+ * Implementation is strictly deterministic and pure-CPU with zero network overhead.
  */
 
 import type { RequestSignal, RouteRule } from "./types.js";
 
 /**
- * "<10", ">=5", "==0" gibi basit bir ifadeyi, elimizdeki sayısal
- * değere uygulayıp true/false döndürür.
- *
- * value: signal[alanAdı] -- örn. signal.diffLines
- * expr:  policy dosyasındaki string ifade -- örn. "<10"
+ * Evaluates numeric comparison expressions (e.g. "<10", ">=5", "==0") against a numeric value.
  */
 export function evalNumericExpr(value: number | undefined, expr: string): boolean {
   if (value === undefined) return false;
 
   const match = expr.match(/^(<=|>=|<|>|==)(\d+)$/);
   if (!match) {
-    throw new Error(`Geçersiz koşul ifadesi: "${expr}"`);
+    throw new Error(`Invalid condition expression: "${expr}"`);
   }
   const [, operator, numberText] = match;
   const threshold = Number(numberText);
@@ -40,8 +31,7 @@ export function evalNumericExpr(value: number | undefined, expr: string): boolea
 }
 
 /**
- * Boolean tipli alanlar için (örn. hasQuickKeyword) basit eşitlik kontrolü.
- * Policy dosyasında "true" / "false" string olarak yazılır.
+ * Evaluates boolean equality expressions (e.g. "true", "false") against a boolean value.
  */
 export function evalBooleanExpr(value: boolean | undefined, expr: string): boolean {
   if (value === undefined) return false;
@@ -49,24 +39,22 @@ export function evalBooleanExpr(value: boolean | undefined, expr: string): boole
 }
 
 /**
- * String tipli alanlar için (örn. textCategory) eşitlik kontrolü.
- * Policy dosyasında "==deep" gibi yazılır.
+ * Evaluates string equality expressions (e.g. "==deep") against a string value.
  */
 export function evalStringExpr(value: string | undefined, expr: string): boolean {
   if (value === undefined) return false;
   const match = expr.match(/^==(.+)$/);
   if (!match) {
-    throw new Error(`Geçersiz string koşul ifadesi: "${expr}" (beklenen format: "==deger")`);
+    throw new Error(`Invalid string condition expression: "${expr}" (expected format: "==value")`);
   }
   return value === match[1];
 }
 
 /**
- * Bir RequestSignal, bir RouteRule'un "when" bloğundaki TÜM koşulları
- * sağlıyor mu? (AND mantığı -- hepsi doğru olmalı)
+ * Checks whether a `RequestSignal` satisfies all conditions defined in a `RouteRule` `when` block (AND logic).
  */
 export function matchesWhen(signal: RequestSignal, rule: RouteRule): boolean {
-  if (!rule.when) return true; // koşulsuz kural = her zaman eşleşir
+  if (!rule.when) return true; // Unconditional rule always matches
 
   return Object.entries(rule.when).every(([key, expr]) => {
     const fieldValue = signal[key as keyof RequestSignal];
@@ -81,17 +69,17 @@ export function matchesWhen(signal: RequestSignal, rule: RouteRule): boolean {
 }
 
 /**
- * Bir kural listesinde, sinyale uyan İLK kuralı bulur.
- * Kurallar sırayla denenir -- policy dosyasındaki sıralama önemlidir,
- * en spesifik kuralları üste, genel/varsayılan kuralı en alta koy.
+ * Returns the first rule in a rule list matching the provided `RequestSignal`.
+ * Rules are evaluated sequentially in array order.
  */
 export function findMatchingRule(signal: RequestSignal, rules: RouteRule[]): RouteRule {
   const found = rules.find((rule) => matchesWhen(signal, rule));
   if (!found) {
     throw new Error(
-      `Hiçbir kural eşleşmedi. Signal: ${JSON.stringify(signal)}. ` +
-      `Policy dosyana koşulsuz bir fallback kural eklemeyi unutma.`
+      `No matching rule found. Signal: ${JSON.stringify(signal)}. ` +
+      `Ensure a fallback rule is defined in the policy.`
     );
   }
   return found;
 }
+

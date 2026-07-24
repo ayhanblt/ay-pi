@@ -1,19 +1,11 @@
 /**
  * TELEMETRY / LOGGER
  * ===================
- * Bu modül pipeline'da bir "adım" DEĞİLDİR -- bir yan etkidir (side effect).
- * Router karar verdikten sonra, "bu karar neydi, hangi kural tetiklendi,
- * hangi model seçildi" bilgisini bir JSONL dosyasına append eder.
+ * Appends routing decisions and execution telemetry to a JSONL log file.
+ * Operates as a side effect and does not affect pipeline data flow.
  *
- * Faz 1'de genişletildi: artık gerçek bir API çağrısı yapıldıysa
- * (--execute bayrağıyla), o çağrının sonucunu (başarılı mı, kaç token,
- * ne kadar sürdü) da AYNI satıra, opsiyonel bir alan olarak ekliyoruz.
- * execution alanı yoksa, o kayıt "sadece karar verildi, gerçek çağrı
- * yapılmadı" anlamına gelir.
- *
- * Neden ayrı ve neden "adım" değil: Telemetry, pipeline'ın çıktısını
- * ETKİLEMEZ. route() fonksiyonu telemetry'den habersiz çalışır; sen
- * onun DÖNÜŞ DEĞERİNİ alıp logDecision()'a ayrıca verirsin.
+ * Captures request signals, resolved workflow decisions, optional execution
+ * results (duration, token usage, HTTP status), and applied model/thinking settings.
  */
 
 import { appendFileSync } from "node:fs";
@@ -33,8 +25,7 @@ export interface TelemetryEntry {
 const LOG_PATH = new URL("../../ay-pi.telemetry.jsonl", import.meta.url).pathname;
 
 /**
- * Tek bir router kararını (ve varsa gerçek API çağrısının sonucunu),
- * tek satırlık JSON olarak dosyaya ekler (append).
+ * Appends a routing decision and optional execution result entry to the JSONL log file.
  */
 export function logDecision(
   signal: RequestSignal,
@@ -53,3 +44,4 @@ export function logDecision(
   };
   appendFileSync(LOG_PATH, JSON.stringify(entry) + "\n", "utf-8");
 }
+

@@ -1,14 +1,10 @@
 /**
- * STICKY-ROUTING.TS
- * -------------------
- * "/plan" ile bir plan çıkardıktan sonra kullanıcı "uygula" gibi kısa bir
- * onay mesajı yazdığında, bu serbest metin normalde /chat'in ucuz tier'ına
- * düşüyor -- oysa niyet açıkça "şimdi kodu yaz" (yani /code). Bu modül,
- * ÖNCEKİ turun intent'ine bakarak böyle bir mesajı /code'a yönlendirir.
+ * STICKY ROUTING
+ * --------------
+ * Re-routes short confirmation responses (e.g., "apply", "go ahead", "uygula")
+ * following a `/plan` turn to the `/code` intent.
  *
- * Pi-agnostik: sadece düz string'lerle çalışır, Pi'yi import etmez.
- * Extension, gerçek session geçmişinden okuduğu önceki mesajın METNİNİ
- * bu modüle verir (bkz. extension/ay-pi/src/index.ts).
+ * Designed as a pure function operating strictly on string values without Pi SDK dependencies.
  */
 
 const APPLY_KEYWORDS = ["uygula", "apply", "devam et", "kodla", "code it", "go ahead", "implement"];
@@ -23,10 +19,8 @@ function containsApplyKeyword(text: string): boolean {
 }
 
 /**
- * rawText serbest metin mi (komut değil) VE bir "uygula" niyeti taşıyor mu
- * VE önceki turun intent'i "/plan" mıydı? Üçü de doğruysa "/code" döner,
- * değilse null (normal akışa devam edilsin demektir -- yani sticky routing
- * devreye girmez).
+ * Returns `/code` if the current text is un-prefixed (`/chat`), contains an implementation trigger keyword,
+ * and the preceding turn's intent was `/plan`. Returns `null` otherwise.
  */
 export function detectStickyCodeIntent(
   rawText: string,
@@ -38,3 +32,4 @@ export function detectStickyCodeIntent(
   if (!containsApplyKeyword(rawText)) return null;
   return "/code";
 }
+

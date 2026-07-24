@@ -1,23 +1,8 @@
 /**
- * POLICY.LOADER.TS
- * -----------------
- * ay-pi.policy.json dosyasını okur, Zod şeması ile doğrular ve tipli bir
- * PolicyFile ({ settings, routes }) döndürür.
- *
- * Neden önemli: policy dosyası elle düzenlenen bir JSON. Yazım hatası
- * (örn. "thinking": "medyum") uygulama ÇALIŞIRKEN değil, BAŞLARKEN
- * patlamalı -- deterministic bir sistemde sürpriz istemeyiz.
- *
- * Önceki sürümde bu dosya ~90 satırlık elle yazılmış if/throw kontrolleri
- * içeriyordu. Zod'a geçilerek şema TEK bir yerde, deklaratif olarak
- * tanımlanıyor -- hem daha az kod hem de daha iyi hata mesajları (Zod,
- * hangi alanda ne tür bir hata olduğunu path bilgisiyle veriyor).
- *
- * DİKKAT: Buradaki şema, router/types.ts'teki TypeScript interface'lerinin
- * (RouteRule, PolicyFile vb.) bir AYNASI -- onları DEĞİŞTİRMİYOR, sadece
- * runtime'da aynı şekli doğruluyor. İkisini senkron tutmak elle yapılan
- * bir iş; router/types.ts'e yeni bir alan eklersen buradaki şemayı da
- * güncellemen gerekir.
+ * POLICY LOADER
+ * -------------
+ * Reads `ay-pi.policy.json`, validates its runtime structure against a Zod schema,
+ * and returns a typed `PolicyFile` object ({ settings, routes }).
  */
 
 import { readFileSync } from "node:fs";
@@ -48,7 +33,7 @@ const OutputConstraintSchema = z.object({
 const RouteRuleSchema = z.object({
   when: z.record(z.string(), z.string()).optional(),
   provider: z.string(),
-  pool: z.array(z.string()).min(1, "en az bir model içermeli"),
+  pool: z.array(z.string()).min(1, "Must contain at least one model"),
   allowedTools: z.array(ToolNameSchema).min(1).optional(),
   thinking: ThinkingLevelSchema,
   contextBudget: ContextBudgetSchema,
@@ -58,7 +43,7 @@ const RouteRuleSchema = z.object({
 
 const RoutePolicySchema = z.object({
   intent: z.string(),
-  rules: z.array(RouteRuleSchema).min(1, "boş olamaz"),
+  rules: z.array(RouteRuleSchema).min(1, "Rules array cannot be empty"),
 });
 
 const PolicySettingsSchema = z.object({
@@ -78,10 +63,11 @@ export function loadPolicies(filePath: string): PolicyFile {
   const result = PolicyFileSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues
-      .map((issue) => `  - ${issue.path.join(".") || "(kök)"}: ${issue.message}`)
+      .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("\n");
-    throw new Error(`${filePath} geçersiz:\n${issues}`);
+    throw new Error(`${filePath} is invalid:\n${issues}`);
   }
 
   return result.data as PolicyFile;
 }
+

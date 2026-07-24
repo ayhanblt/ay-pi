@@ -1,18 +1,17 @@
 /**
- * ASSEMBLER.TS
- * -------------
- * GİRDİ:  aday dosya listesi (Pi adaptörünün topladığı, proje içindeki
- *         açık/değişen dosyalar) + WorkflowObject.contextBudget
- * ÇIKTI:  budget'a uyan, öncelik sırasına göre seçilmiş dosya listesi
- *
- * Bu fonksiyon LLM çağırmaz, embedding kullanmaz. Basit bir
- * "önce aktif dosya, sonra en son değişenler" sıralaması + bütçe
- * dolana kadar ekleme mantığı yürütür.
+ * ASSEMBLER
+ * ---------
+ * Filters and ranks candidate files (`FileCandidate`) against context budget parameters (`ContextBudget`).
+ * Prioritizes actively focused files, followed by recently modified files, up to budget limits.
  */
 
 import type { FileCandidate } from "./types.js";
 import type { ContextBudget } from "../workflow/types.js";
 
+/**
+ * Selects an array of `FileCandidate` objects adhering to `ContextBudget` file count (`maxFiles`)
+ * and character ceiling (`maxChars`) limits.
+ */
 export function selectFiles(
   candidates: FileCandidate[],
   budget: ContextBudget
@@ -27,10 +26,11 @@ export function selectFiles(
 
   for (const file of sorted) {
     if (selected.length >= budget.maxFiles) break;
-    if (usedChars + file.size > budget.maxChars) continue; // sığmıyorsa atla, sıradakine bak
+    if (usedChars + file.size > budget.maxChars) continue; // Skip file if character limit exceeded
     selected.push(file);
     usedChars += file.size;
   }
 
   return selected;
 }
+

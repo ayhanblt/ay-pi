@@ -16,7 +16,7 @@ function evalNumericExpr(value, expr) {
   if (value === void 0) return false;
   const match = expr.match(/^(<=|>=|<|>|==)(\d+)$/);
   if (!match) {
-    throw new Error(`Ge\xE7ersiz ko\u015Ful ifadesi: "${expr}"`);
+    throw new Error(`Invalid condition expression: "${expr}"`);
   }
   const [, operator, numberText] = match;
   const threshold = Number(numberText);
@@ -43,7 +43,7 @@ function evalStringExpr(value, expr) {
   if (value === void 0) return false;
   const match = expr.match(/^==(.+)$/);
   if (!match) {
-    throw new Error(`Ge\xE7ersiz string ko\u015Ful ifadesi: "${expr}" (beklenen format: "==deger")`);
+    throw new Error(`Invalid string condition expression: "${expr}" (expected format: "==value")`);
   }
   return value === match[1];
 }
@@ -64,7 +64,7 @@ function findMatchingRule(signal, rules) {
   const found = rules.find((rule) => matchesWhen(signal, rule));
   if (!found) {
     throw new Error(
-      `Hi\xE7bir kural e\u015Fle\u015Fmedi. Signal: ${JSON.stringify(signal)}. Policy dosyana ko\u015Fulsuz bir fallback kural eklemeyi unutma.`
+      `No matching rule found. Signal: ${JSON.stringify(signal)}. Ensure a fallback rule is defined in the policy.`
     );
   }
   return found;
@@ -72,7 +72,7 @@ function findMatchingRule(signal, rules) {
 
 // ../../src/router/keywords.ts
 var CHAT_KEYWORDS = [
-  // selamlaşma / nezaket
+  // Greetings / courtesies (Turkish & English)
   "selam",
   "merhaba",
   "naber",
@@ -88,7 +88,6 @@ var CHAT_KEYWORDS = [
   "sa\u011F ol",
   "rica ederim",
   "kolay gelsin",
-  // İngilizce karşılıkları
   "hi",
   "hello",
   "hey",
@@ -99,14 +98,14 @@ var CHAT_KEYWORDS = [
   "thank you",
   "bye",
   "goodbye",
-  // küçük sohbet / durum bildirme
+  // Casual conversational phrases
   "ne haber",
   "nas\u0131l gidiyor",
   "iyiyim",
   "iyilik"
 ];
 var DEEP_THINKING_KEYWORDS = [
-  // mimari / tasarım
+  // Architecture / System Design
   "mimari",
   "mimarisi",
   "tasar\u0131m",
@@ -115,7 +114,7 @@ var DEEP_THINKING_KEYWORDS = [
   "design",
   "yap\u0131 ta\u015F\u0131",
   "sistem tasar\u0131m\u0131",
-  // karşılaştırma / karar
+  // Evaluation / Trade-offs / Comparison
   "trade-off",
   "tradeoff",
   "kar\u015F\u0131la\u015Ft\u0131r",
@@ -126,7 +125,7 @@ var DEEP_THINKING_KEYWORDS = [
   "compare",
   "vs",
   "yerine",
-  // neden-sonuç / derinlik
+  // In-depth Analysis / Causality
   "neden",
   "ni\xE7in",
   "niye",
@@ -137,7 +136,7 @@ var DEEP_THINKING_KEYWORDS = [
   "why",
   "how does",
   "explain",
-  // strateji / planlama
+  // Strategy / Best Practices
   "strateji",
   "yakla\u015F\u0131m",
   "alternatif",
@@ -242,7 +241,7 @@ function route(signal, policyFile) {
   const policy = policyFile.routes.find((p) => p.intent === signal.command) ?? policyFile.routes.find((p) => p.intent === "/chat");
   if (!policy) {
     throw new Error(
-      `Ne "${signal.command}" ne de fallback "/chat" i\xE7in policy tan\u0131ml\u0131. ay-pi.policy.json dosyan\u0131 kontrol et.`
+      `No policy defined for "${signal.command}" or fallback "/chat". Check policy configuration.`
     );
   }
   const rule = findMatchingRule(signal, policy.rules);
@@ -256,9 +255,6 @@ function route(signal, policyFile) {
     thinking: finalThinking,
     contextBudget: rule.contextBudget,
     constraints: rule.constraints,
-    // Kural özel bir liste vermediyse tüm araçlar açık kalır -- kısıtlama
-    // sadece explicit olarak dar bir "allowedTools" tanımlanan kurallarda
-    // (örn. /code /quick) devreye girer.
     allowedTools: rule.allowedTools ?? [...ALL_TOOLS],
     output: rule.output ?? { maxTokens: 1e3 },
     meta: {
@@ -14805,7 +14801,7 @@ var OutputConstraintSchema = external_exports.object({
 var RouteRuleSchema = external_exports.object({
   when: external_exports.record(external_exports.string(), external_exports.string()).optional(),
   provider: external_exports.string(),
-  pool: external_exports.array(external_exports.string()).min(1, "en az bir model i\xE7ermeli"),
+  pool: external_exports.array(external_exports.string()).min(1, "Must contain at least one model"),
   allowedTools: external_exports.array(ToolNameSchema).min(1).optional(),
   thinking: ThinkingLevelSchema,
   contextBudget: ContextBudgetSchema,
@@ -14814,7 +14810,7 @@ var RouteRuleSchema = external_exports.object({
 });
 var RoutePolicySchema = external_exports.object({
   intent: external_exports.string(),
-  rules: external_exports.array(RouteRuleSchema).min(1, "bo\u015F olamaz")
+  rules: external_exports.array(RouteRuleSchema).min(1, "Rules array cannot be empty")
 });
 var PolicySettingsSchema = external_exports.object({
   diffLinesEscalationThreshold: external_exports.number().positive(),
@@ -14829,8 +14825,8 @@ function loadPolicies(filePath) {
   const parsed = JSON.parse(raw);
   const result = PolicyFileSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues.map((issue2) => `  - ${issue2.path.join(".") || "(k\xF6k)"}: ${issue2.message}`).join("\n");
-    throw new Error(`${filePath} ge\xE7ersiz:
+    const issues = result.error.issues.map((issue2) => `  - ${issue2.path.join(".") || "(root)"}: ${issue2.message}`).join("\n");
+    throw new Error(`${filePath} is invalid:
 ${issues}`);
   }
   return result.data;
@@ -14895,7 +14891,7 @@ function loadFileContents(files, cwd = process.cwd()) {
     } catch (error51) {
       return {
         path: file2.path,
-        content: `(Bu dosya okunamad\u0131: ${error51 instanceof Error ? error51.message : String(error51)})`
+        content: `(Failed to read file: ${error51 instanceof Error ? error51.message : String(error51)})`
       };
     }
   });
@@ -15000,7 +14996,7 @@ function ayPi(pi) {
     const misplaced = detectMisplacedCliCommand(event.text);
     if (misplaced) {
       ctx.ui.notify(
-        `"${misplaced}" bir terminal komutudur, Pi sohbet kutusuna de\u011Fil ger\xE7ek bir terminale yaz\u0131lmal\u0131. Yeni bir terminal sekmesi a\xE7\u0131p orada "${misplaced}" \xE7al\u0131\u015Ft\u0131r.`,
+        `"${misplaced}" is a CLI command and should be run in a terminal window.`,
         "info"
       );
       return { action: "handled" };
@@ -15008,7 +15004,7 @@ function ayPi(pi) {
     return { action: "continue" };
   });
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify("AY-PI extension y\xFCklendi \u2713", "info");
+    ctx.ui.notify("AY-PI extension active", "info");
   });
   pi.on("before_agent_start", async (event, ctx) => {
     const rawText = event.prompt;
@@ -15033,7 +15029,7 @@ function ayPi(pi) {
     }
     if (!modelApplied) {
       ctx.ui.notify(
-        `AY-PI: Belirtilen model havuzundaki hi\xE7bir model (${workflow.modelPool.join(", ")}) bulunamad\u0131 veya uygulanamad\u0131. Mevcut model de\u011Fi\u015Ftirilmedi.`,
+        `AY-PI: None of the candidate models (${workflow.modelPool.join(", ")}) were available. Active model unchanged.`,
         "error"
       );
     }
@@ -15043,7 +15039,7 @@ function ayPi(pi) {
     const appliedModelId = appliedModelObj ? appliedModelObj.id : void 0;
     if (appliedThinking !== workflow.thinking) {
       ctx.ui.notify(
-        `AY-PI: '${workflow.thinking}' istendi ama model '${appliedThinking}' seviyesinde \xE7al\u0131\u015F\u0131yor.`,
+        `AY-PI: Requested thinking '${workflow.thinking}', active thinking level is '${appliedThinking}'.`,
         "info"
       );
     }
@@ -15053,10 +15049,10 @@ function ayPi(pi) {
     const selected = selectFiles(candidates, workflow.contextBudget);
     const assembledFiles = loadFileContents(selected, ctx.cwd);
     const prompt = buildPrompt(workflow, assembledFiles, rawText);
-    const toolsNote = workflow.allowedTools.length < ALL_TOOLS.length ? ` (ara\xE7lar: ${workflow.allowedTools.join(",")})` : "";
+    const toolsNote = workflow.allowedTools.length < ALL_TOOLS.length ? ` (tools: ${workflow.allowedTools.join(",")})` : "";
     ctx.ui.setStatus(
       "ay-pi",
-      `AY-PI: ${workflow.provider}/${appliedModelInfo ?? workflow.modelPool[0]} \xB7 ${appliedThinking}` + (workflow.meta.diffLinesEscalationApplied ? " (\u2191 diffLines e\u015Fi\u011Fi a\u015F\u0131ld\u0131)" : "") + toolsNote
+      `AY-PI: ${workflow.provider}/${appliedModelInfo ?? workflow.modelPool[0]} \xB7 ${appliedThinking}` + (workflow.meta.diffLinesEscalationApplied ? " (\u2191 diffLines escalated)" : "") + toolsNote
     );
     logDecision(signal, workflow, void 0, appliedModelId, appliedThinking);
     const result = {
@@ -15069,30 +15065,29 @@ ${prompt.systemPrompt}`
         customType: "ay-pi-context",
         content: prompt.userPrompt,
         display: false
-        // sadece LLM context'ine gitsin, kullanıcıya ayrıca gösterilmesin (Pi zaten kendi mesajını gösteriyor)
       };
     }
     return result;
   });
   pi.registerCommand("ay-pi-status", {
-    description: "AY-PI policy dosyas\u0131n\u0131 ve son kararlar\u0131 g\xF6ster (LLM \xE7a\u011Fr\u0131s\u0131 yapmaz)",
+    description: "Display AY-PI status and active policy metrics",
     handler: async (args, commandCtx) => {
       const policy = getPolicy();
       const ruleCount = policy.routes.reduce((acc, r) => acc + r.rules.length, 0);
       commandCtx.ui.notify(
-        `AY-PI Aktif.
-Policy: ${policy.routes.length} intent, ${ruleCount} rule y\xFCkl\xFC.
-Loglar: ay-pi.telemetry.jsonl`,
+        `AY-PI Active.
+Policy: ${policy.routes.length} intents, ${ruleCount} rules loaded.
+Telemetry: ay-pi.telemetry.jsonl`,
         "info"
       );
     }
   });
   pi.registerCommand("ay-pi-reload-policy", {
-    description: "AY-PI policy dosyas\u0131n\u0131 yeniden y\xFCkle (LLM \xE7a\u011Fr\u0131s\u0131 yapmaz)",
+    description: "Reload AY-PI policy definition file",
     handler: async (args, commandCtx) => {
       cachedPolicy = null;
       getPolicy();
-      commandCtx.ui.notify("AY-PI: Policy cache temizlendi ve dosya yeniden y\xFCklendi.", "info");
+      commandCtx.ui.notify("AY-PI: Policy cache cleared and reloaded.", "info");
     }
   });
 }

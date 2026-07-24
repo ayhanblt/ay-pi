@@ -1,14 +1,7 @@
 /**
- * ROUTER/INDEX.TS
- * ----------------
- * Pipeline'ın "Intent Detection + Decision Engine + Model/Thinking
- * Selection" adımlarının HEPSİNİN birleştiği tek dosya.
- *
- *   detectIntent(rawText)        -> ham metinden komut ismini çıkarır ("/code")
- *   detectSubcommand(rawText)    -> komuttan hemen sonraki alt-komutu çıkarır ("/quick")
- *   buildSignal(rawText, ...)    -> ham metinden TAM RequestSignal inşa eder
- *   route(signal, policyFile)    -> RequestSignal + policy dosyası alır,
- *                                    WorkflowObject üretir
+ * ROUTER INDEX
+ * ------------
+ * Combines intent detection, subcommand parsing, signal assembly, and decision routing.
  */
 
 import type { ThinkingLevel, WorkflowObject } from "../workflow/types.js";
@@ -16,17 +9,10 @@ import { ALL_TOOLS, THINKING_LEVELS } from "../workflow/types.js";
 import type { PolicyFile, RequestSignal, RouteRule } from "./types.js";
 import { findMatchingRule } from "./rules.js";
 import { classifyText } from "./textClassifier.js";
+import { detectStickyCodeIntent } from "./stickyRouting.js";
 
 /**
- * Ham kullanıcı metninden intent (komut) çıkarır.
- *
- * GİRDİ:  "/code fix the typo in login.ts"
- * ÇIKTI:  "/code"
- *
- * GİRDİ:  "bugün hava nasıl"   (komut yok, düz sohbet)
- * ÇIKTI:  "/chat"
- *
- * Bu adım tamamen string işlemi -- LLM'e hiç uğramaz.
+ * Extracts intent command from raw prompt text. Returns `/chat` if no leading slash `/` command is present.
  */
 export function detectIntent(rawText: string): string {
   const trimmed = rawText.trim();
@@ -37,18 +23,7 @@ export function detectIntent(rawText: string): string {
 }
 
 /**
- * Komuttan HEMEN sonraki token da "/" ile başlıyorsa, bunu bir alt-komut
- * (subcommand) olarak kabul eder. Bu, kullanıcının bilinçli yazdığı KESİN
- * bir sinyaldir (Katman 1) -- diffLines gibi tahmine dayalı değildir.
- *
- * GİRDİ:  "/code /quick fix typo in login.ts"
- * ÇIKTI:  "/quick"
- *
- * GİRDİ:  "/plan /brainstorm add payment retry logic"
- * ÇIKTI:  "/brainstorm"
- *
- * GİRDİ:  "/code fix typo"  (alt-komut yok)
- * ÇIKTI:  undefined
+ * Extracts subcommand if the second token in the prompt also starts with a `/` (e.g. `/quick` in `/code /quick`).
  */
 export function detectSubcommand(rawText: string): string | undefined {
   const tokens = rawText.trim().split(/\s+/);
@@ -59,11 +34,7 @@ export function detectSubcommand(rawText: string): string | undefined {
 }
 
 /**
- * Ham metinde "hızlı/quick/ufak" gibi anahtar kelime var mı?
- * NOT: /quick artık açık bir subcommand (yukarıya bkz.), bu yüzden bu alan
- * şu an hiçbir policy kuralında KULLANILMIYOR -- ileride serbest metin
- * (/chat) için bir ince ayar sinyali olarak değerlendirilebilir diye
- * saklı tutuluyor.
+ * Checks for presence of speed/quick keywords in prompt text.
  */
 export function detectQuickKeyword(rawText: string): boolean {
   const keywords = ["quick", "hızlı", "hızlıca", "ufak", "küçük düzeltme"];
@@ -71,23 +42,9 @@ export function detectQuickKeyword(rawText: string): boolean {
   return keywords.some((k) => lower.includes(k));
 }
 
-import { detectStickyCodeIntent } from "./stickyRouting.js";
-
 /**
- * Ham metinden ve (varsa) dışarıdan gelen ek sinyallerden (diffLines gibi,
- * git'ten hesaplanan) TAM bir RequestSignal inşa eder. Bu, "ham metin
- * girer, yapılandırılmış sinyal çıkar" adımının TEK giriş noktasıdır --
- * cli.ts ve ileride Pi adaptörü aynı fonksiyonu çağırır.
- *
- * textCategory SADECE command === "/chat" ise hesaplanır: /code, /plan
- * gibi açık komutlarda intent zaten netleşmiştir, sınıflandırıcıyı
- * gereksiz yere çalıştırmayız.
- *
- * previousIntent: Pi session'ından okunan ÖNCEKİ turun intent'i (örn.
- * "/plan"). Sadece "yapışkan routing" (sticky routing) için kullanılır --
- * bkz. stickyRouting.ts. dev-tools/cli.ts gibi session'sız ortamlarda
- * bu parametre hiç verilmez (varsayılan null), sticky routing devreye
- * girmez -- bu KASITLI bir davranış farkı, bug değil.
+ * Assembles a complete `RequestSignal` from raw prompt text and optional overrides/session state.
+ * Evaluates free-text classification only when `command` equals `/chat`.
  */
 export function buildSignal(
   rawText: string,
@@ -117,11 +74,7 @@ export function buildSignal(
 }
 
 /**
- * Thinking seviyesini merdivende bir basamak yukarı çıkarır.
- * Zaten en tepedeyse (xhigh) hiçbir şey yapmaz.
- *
- * SADECE diffLines eşiği aşıldığında çağrılır (bkz. route()). Asla model
- * havuzunu (pool) değiştirmez -- sadece bu tek alanı etkiler.
+ * Elevates thinking level up one step in the ordered hierarchy (`THINKING_LEVELS`).
  */
 export function escalateThinking(level: ThinkingLevel): ThinkingLevel {
   const index = THINKING_LEVELS.indexOf(level);
@@ -130,18 +83,7 @@ export function escalateThinking(level: ThinkingLevel): ThinkingLevel {
 }
 
 /**
- * ANA FONKSİYON: verilen RequestSignal ve policy dosyasına göre
- * WorkflowObject üretir. Bu, tüm pipeline'ın "karar verme" adımıdır.
- *
- * Adımlar:
- *  1) signal.command'a karşılık gelen RoutePolicy'yi bul
- *     (bulunamazsa "/chat" politikasına düş)
- *  2) O politikanın kuralları arasında signal'e uyan ilk kuralı bul
- *     (subcommand varsa "when" koşuluyla eşleşen kural öncelikli --
- *     bu adım pool'u BELİRLER)
- *  3) diffLines, policy.settings.diffLinesEscalationThreshold'u
- *     aşıyorsa, thinking'i bir basamak yukarı çıkar (pool'a DOKUNMAZ)
- *  4) Kuralın alanlarından bir WorkflowObject inşa et
+ * Primary routing function. Evaluates a `RequestSignal` against a `PolicyFile` to produce a `WorkflowObject`.
  */
 export function route(signal: RequestSignal, policyFile: PolicyFile): WorkflowObject {
   const policy =
@@ -150,8 +92,8 @@ export function route(signal: RequestSignal, policyFile: PolicyFile): WorkflowOb
 
   if (!policy) {
     throw new Error(
-      `Ne "${signal.command}" ne de fallback "/chat" için policy tanımlı. ` +
-      `ay-pi.policy.json dosyanı kontrol et.`
+      `No policy defined for "${signal.command}" or fallback "/chat". ` +
+      `Check policy configuration.`
     );
   }
 
@@ -171,9 +113,6 @@ export function route(signal: RequestSignal, policyFile: PolicyFile): WorkflowOb
     thinking: finalThinking,
     contextBudget: rule.contextBudget,
     constraints: rule.constraints,
-    // Kural özel bir liste vermediyse tüm araçlar açık kalır -- kısıtlama
-    // sadece explicit olarak dar bir "allowedTools" tanımlanan kurallarda
-    // (örn. /code /quick) devreye girer.
     allowedTools: rule.allowedTools ?? [...ALL_TOOLS],
     output: rule.output ?? { maxTokens: 1000 },
     meta: {
@@ -182,3 +121,4 @@ export function route(signal: RequestSignal, policyFile: PolicyFile): WorkflowOb
     },
   };
 }
+

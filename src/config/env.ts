@@ -1,13 +1,8 @@
 /**
- * ENV.TS
- * -------
- * Küçük, bağımlılıksız bir .env yükleyici. `dotenv` paketi kurmak yerine
- * (CPU-first felsefesiyle uyumlu, tek satırlık ihtiyaç için gereksiz bir
- * bağımlılık eklememek adına) burada minimal bir versiyonunu yazıyoruz.
- *
- * .env formatı desteklenen: KEY=VALUE, boş satırlar, "#" ile başlayan
- * yorum satırları. Zaten process.env'de tanımlı bir değişkeni EZMEZ --
- * yani gerçek ortam değişkenleri her zaman .env dosyasından önceliklidir.
+ * ENV
+ * ---
+ * Dependency-free `.env` file parser and loader.
+ * Parses KEY=VALUE pairs while preserving pre-existing `process.env` variables.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -25,7 +20,7 @@ export function loadEnvFile(path: string = ".env"): void {
 
     const key = trimmed.slice(0, eqIndex).trim();
     let value = trimmed.slice(eqIndex + 1).trim();
-    // Tırnak içindeyse tırnakları soy
+    // Strip enclosing quotes if present
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
@@ -35,3 +30,4 @@ export function loadEnvFile(path: string = ".env"): void {
     }
   }
 }
+

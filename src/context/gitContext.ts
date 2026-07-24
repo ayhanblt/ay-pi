@@ -1,16 +1,8 @@
 /**
- * GIT-CONTEXT.TS
- * ---------------
- * Faz 0'da cli.ts içinde sahte (hardcoded) bir dosya listesi kullanıyorduk.
- * Bu dosya onun yerini alıyor: gerçek `git diff` çıktısından değişen
- * dosyaları bulur, gerçek dosya sistemine bakıp boyut/değişim zamanı
- * bilgisini toplar (selectFiles() için), ve seçilen dosyaların gerçek
- * içeriğini okur (buildPrompt() için).
- *
- * Üç ayrı fonksiyona bölünmüş olmasının nedeni: dosya İÇERİĞİNİ SADECE
- * Context Assembler'ın SEÇTİĞİ dosyalar için okumak istiyoruz -- değişen
- * her dosyanın tam içeriğini önceden okumak gereksiz IO ve bellek
- * kullanımı olurdu.
+ * GIT CONTEXT
+ * -----------
+ * Discovers modified files via `git diff`, retrieves file metadata (size, modification timestamp),
+ * and loads file content for candidates selected by `ContextAssembler`.
  */
 
 import { execSync } from "node:child_process";
@@ -20,10 +12,8 @@ import type { FileCandidate } from "./types.js";
 import type { AssembledFile } from "../prompt/builder.js";
 
 /**
- * `git diff --name-only` ile şu an değişmiş (henüz commit edilmemiş)
- * dosyaların yollarını döndürür. git deposu yoksa / komut başarısız
- * olursa BOŞ DİZİ döner -- hata fırlatmaz, çünkü "git yok" durumu
- * geçerli bir senaryo (örn. henüz init edilmemiş bir klasör).
+ * Executes `git diff --name-only` to retrieve uncommitted modified file paths.
+ * Returns an empty array if Git is not initialized or execution fails.
  */
 export function getChangedFilePaths(cwd: string = process.cwd()): string[] {
   try {
@@ -40,13 +30,8 @@ export function getChangedFilePaths(cwd: string = process.cwd()): string[] {
 }
 
 /**
- * Dosya yollarından FileCandidate[] üretir -- gerçek boyut ve değişim
- * zamanı bilgisiyle (fs.statSync). Okunamayan (silinmiş, izin sorunu
- * olan) dosyaları SESSİZCE atlar -- bir dosyanın stat'ı başarısız oldu
- * diye tüm context toplama sürecini durdurmak istemiyoruz.
- *
- * isActive her zaman false: CLI'da "editörde açık dosya" kavramı yok.
- * Faz 2'de Pi adaptörü bu alanı gerçek session bilgisinden dolduracak.
+ * Constructs an array of `FileCandidate` objects with size and modification timestamp metadata.
+ * Skips deleted or inaccessible files.
  */
 export function buildFileCandidates(
   paths: string[],
@@ -64,18 +49,15 @@ export function buildFileCandidates(
         lastModifiedAt: stat.mtimeMs,
       });
     } catch {
-      // Dosya silinmiş/erişilemez olabilir (örn. git diff'te "deleted" olarak
-      // görünen bir dosya artık diskte yok) -- atla, devam et.
+      // Omit deleted or unreadable files
     }
   }
   return candidates;
 }
 
 /**
- * selectFiles()'ın SEÇTİĞİ (bütçeye sığan) dosyaların gerçek içeriğini
- * okur. Okunamayan bir dosya olursa, o dosyayı atlar (hata fırlatmaz) --
- * ama bunu görünür kılmak için içerik yerine bir uyarı metni koyar,
- * sessizce yok saymak yerine.
+ * Loads text content for selected `FileCandidate` files.
+ * Replaces content with an error message string if reading fails for a particular file.
  */
 export function loadFileContents(
   files: FileCandidate[],
@@ -88,8 +70,9 @@ export function loadFileContents(
     } catch (error) {
       return {
         path: file.path,
-        content: `(Bu dosya okunamadı: ${error instanceof Error ? error.message : String(error)})`,
+        content: `(Failed to read file: ${error instanceof Error ? error.message : String(error)})`,
       };
     }
   });
 }
+

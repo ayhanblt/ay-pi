@@ -1,28 +1,15 @@
 /**
- * CLI.TS
- * -------
- * Bu dosya Pi'ye HİÇ dokunmuyor. Faz 1'de artık gerçek dosya sistemi
- * (git diff + fs) ve isteğe bağlı olarak gerçek OpenCode Go API çağrısı
- * kullanıyor -- ama hâlâ Pi'siz, bağımsız bir test aracı.
+ * CLI TEST HARNESS
+ * ================
+ * Command line utility for testing AY-PI routing logic, prompt assembly,
+ * and optional OpenCode Go API execution outside the Pi extension environment.
  *
- * ÇALIŞTIRMA (sadece karar göster, API çağrısı yapma):
- *   npx tsx src/cli.ts "/code /quick fix typo in login.ts"
- *   npx tsx src/cli.ts "/code refactor the auth module" --diff-lines=80
- *   npx tsx src/cli.ts "/plan /brainstorm add payment retry logic"
+ * USAGE (inspect decision only):
+ *   npx tsx dev-tools/cli.ts "/code /quick fix typo in login.ts"
+ *   npx tsx dev-tools/cli.ts "/code refactor the auth module" --diff-lines=80
  *
- * ÇALIŞTIRMA (gerçek API çağrısı da yap -- OPENCODE_API_KEY gerekli):
- *   npx tsx src/cli.ts "/code /quick fix typo in login.ts" --execute
- *
- * TAM AKIŞ:
- *   1. .env yüklenir (varsa)
- *   2. Ham metinden RequestSignal inşa edilir (subcommand + diffLines dahil)
- *   3. Policy dosyası (settings + routes) okunur
- *   4. route() çağrılır -> WorkflowObject üretilir (pool + escalation)
- *   5. Gerçek değişen dosyalar (git diff) bulunur, contextBudget'a göre seçilir
- *   6. Seçilen dosyaların gerçek içeriği okunur
- *   7. buildPrompt() ile system/user prompt inşa edilir
- *   8. --execute verildiyse: gerçek API çağrısı yapılır, sonuç gösterilir
- *   9. Karar (+ varsa execution sonucu) telemetry'ye loglanır
+ * USAGE (with API execution):
+ *   npx tsx dev-tools/cli.ts "/code /quick fix typo in login.ts" --execute
  */
 
 import { execSync } from "node:child_process";
@@ -40,10 +27,8 @@ import type { ExecutionResult } from "../src/telemetry/types.js";
 loadEnvFile();
 
 /**
- * ÖNEMLİ: gerçek entegrasyonda (Faz 2, Pi adaptörü) kullanıcı hiçbir zaman
- * "--diff-lines" gibi bir bayrak yazmaz. Bu bilgi CPU tarafından, `git diff`
- * çalıştırılarak OTOMATİK hesaplanır. --diff-lines bayrağı sadece bu CLI'da,
- * git deposu olmayan bir ortamda manuel test etmek için var (override amaçlı).
+ * Computes uncommitted diff line counts (`git diff --shortstat`) for CLI testing.
+ * The `--diff-lines=N` command-line flag overrides this value if provided.
  */
 function detectDiffLinesFromGit(): number | undefined {
   try {
@@ -73,80 +58,80 @@ async function main() {
   const { rawText, diffLines, execute } = parseArgs(argv);
 
   if (!rawText) {
-    console.error('Kullanım: npx tsx src/cli.ts "/code /quick fix typo" [--diff-lines=N] [--execute]');
+    console.error('Usage: npx tsx dev-tools/cli.ts "/code /quick fix typo" [--diff-lines=N] [--execute]');
     process.exit(1);
   }
 
-  // --- 1) Ham metinden RequestSignal inşa et (CPU-only, LLM yok) ---
+  // 1) Construct RequestSignal from raw input (pure CPU evaluation)
   const signal = buildSignal(rawText, { diffLines });
 
-  console.log("\n[1] RequestSignal (ham metinden çıkarılan sinyaller):");
+  console.log("\n[1] RequestSignal:");
   console.log(signal);
 
   if (signal.command === "/chat") {
     const debug = classifyText(rawText);
     console.log(
-      `    (sınıflandırma detayı: yöntem=${debug.method}, güven=${debug.confidence.toFixed(3)})`
+      `    (classification detail: method=${debug.method}, confidence=${debug.confidence.toFixed(3)})`
     );
   }
 
-  // --- 2) Policy dosyasını yükle ve karar ver ---
+  // 2) Load policy definition and evaluate routing rules
   const policyFile = loadPolicies(new URL("../ay-pi.policy.json", import.meta.url).pathname);
   const workflow = route(signal, policyFile);
 
-  console.log("\n[2] WorkflowObject (Router'ın nihai kararı):");
+  console.log("\n[2] WorkflowObject:");
   console.log(workflow);
-  console.log(`    (birincil model: ${workflow.provider}/${workflow.modelPool[0]})`);
-  console.log(`    (izinli araçlar: ${workflow.allowedTools.join(", ")})`);
+  console.log(`    (primary model: ${workflow.provider}/${workflow.modelPool[0]})`);
+  console.log(`    (allowed tools: ${workflow.allowedTools.join(", ")})`);
 
-  // --- 3) Gerçek değişen dosyaları bul, bütçeye göre seç ---
+  // 3) Discover modified files and select candidates within context budget
   const changedPaths = getChangedFilePaths();
   const candidates = buildFileCandidates(changedPaths);
   const selected = selectFiles(candidates, workflow.contextBudget);
 
-  console.log("\n[3] Seçilen dosyalar (gerçek git diff + contextBudget'a göre):");
-  console.log(selected.length > 0 ? selected.map((f) => f.path) : "(değişen dosya bulunamadı / git deposu değil)");
+  console.log("\n[3] Selected files:");
+  console.log(selected.length > 0 ? selected.map((f) => f.path) : "(no changed files found / not a git repo)");
 
-  // --- 4) Seçilen dosyaların gerçek içeriğini oku, prompt'u inşa et ---
+  // 4) Load file contents and build system/user prompts
   const assembledFiles = loadFileContents(selected);
   const prompt = buildPrompt(workflow, assembledFiles, rawText);
 
-  console.log("\n[4] Üretilen prompt:");
+  console.log("\n[4] Assembled prompt:");
   console.log("--- systemPrompt ---\n" + prompt.systemPrompt);
   console.log("--- userPrompt ---\n" + prompt.userPrompt);
 
-  // --- 5) İsteğe bağlı: gerçek API çağrısı ---
+  // 5) Perform API call if --execute flag is set
   let execution: ExecutionResult | undefined;
   if (execute) {
     const apiKey = process.env.OPENCODE_API_KEY;
     if (!apiKey) {
       console.error(
-        "\n[5] --execute verildi ama OPENCODE_API_KEY tanımlı değil " +
-        "(.env dosyasına ya da ortam değişkenine ekle)."
+        "\n[5] --execute flag was passed but OPENCODE_API_KEY is not defined."
       );
     } else {
-      console.log("\n[5] Gerçek API çağrısı yapılıyor...");
+      console.log("\n[5] Executing API call...");
       execution = await executeOpenCodeGo(workflow, prompt, apiKey);
       if (execution.success) {
-        console.log(`    Başarılı (${execution.durationMs}ms). Cevap:\n`);
+        console.log(`    Success (${execution.durationMs}ms). Response:\n`);
         console.log(execution.content);
         if (execution.usage) {
           console.log(
-            `\n    (token kullanımı: giriş=${execution.usage.inputTokens ?? "?"}, çıkış=${execution.usage.outputTokens ?? "?"})`
+            `\n    (token usage: input=${execution.usage.inputTokens ?? "?"}, output=${execution.usage.outputTokens ?? "?"})`
           );
         }
       } else {
-        console.error(`    Başarısız (${execution.durationMs}ms): ${execution.errorMessage}`);
+        console.error(`    Failed (${execution.durationMs}ms): ${execution.errorMessage}`);
       }
     }
   } else {
-    console.log("\n[5] --execute verilmedi, gerçek API çağrısı yapılmadı (sadece karar gösterildi).");
+    console.log("\n[5] --execute flag omitted; skipping API call.");
   }
 
-  // --- 6) Telemetry'ye logla ---
+  // 6) Log telemetry entry
   logDecision(signal, workflow, execution);
 
-  console.log("\n=> Karar (+ varsa çağrı sonucu) ay-pi.telemetry.jsonl'e loglandı.\n");
+  console.log("\n=> Logged decision to ay-pi.telemetry.jsonl.\n");
 }
 
 main();
+

@@ -1,27 +1,9 @@
 /**
- * OPENCODE-GO-EXECUTOR.TS
- * -------------------------
- * WorkflowObject.modelPool[0] (birincil model) ile gerçek bir OpenCode Go
- * API çağrısı yapar. OpenAI-uyumlu /chat/completions endpoint'i kullanır.
- *
- * DOĞRULANMIŞ API BİLGİLERİ (araştırma + gerçek denemeyle teyit edildi):
- *   - Base URL: https://opencode.ai/zen/go/v1
- *   - Auth: Authorization: Bearer $OPENCODE_API_KEY
- *   - Model ID: ÇIPLAK model adı, "opencode-go/" ÖN EKİ OLMADAN
- *     (örn. "deepseek-v4-flash", "opencode-go/deepseek-v4-flash" DEĞİL).
- *     "opencode-go/<model>" formatı, Pi/Mastra gibi araçların KENDİ iç
- *     adresleme şeması (hangi provider'ı kullanacağını belirtmek için) --
- *     gerçek HTTP isteğinde, endpoint zaten Go'ya özel olduğu için model
- *     alanı çıplak gönderilir. İlk denemede bunu yanlış yapıp 401/ModelError
- *     aldık, gerçek API'ye karşı test ederek düzelttik.
- *
- * NOT (thinking level): OpenCode Go'nun /chat/completions endpoint'inin
- * "reasoning_effort" gibi bir parametreyi nasıl kabul ettiği dokümantasyonda
- * doğrulanmadı. Yanlış bir parametre göndermek isteği tamamen reddettirebilir,
- * bu yüzden bu Faz 1 Executor'ı thinking seviyesini İSTEK GÖVDESİNE
- * GÖNDERMİYOR -- sadece test amaçlı kullanıldığı için bu eksiklik kabul
- * edilebilir. Gerçek thinking kontrolü Faz 2'de pi.setThinkingLevel() ile,
- * Pi'nin kendi (doğrulanmış) mekanizmasıyla yapılacak.
+ * OPENCODE GO EXECUTOR
+ * ====================
+ * Dispatches prompt payloads directly to the OpenCode Go `/chat/completions` API endpoint.
+ * Uses `workflow.modelPool[0]` as the primary target model ID.
+ * Used exclusively for CLI testing; execution in production is handled natively by Pi.
  */
 
 import type { WorkflowObject } from "../../src/workflow/types.js";
@@ -36,7 +18,7 @@ export async function executeOpenCodeGo(
   prompt: BuiltPrompt,
   apiKey: string
 ): Promise<ExecutionResult> {
-  // DİKKAT: provider ön eki YOK -- API çıplak model adı bekliyor.
+  // Target model ID without provider prefix
   const modelId = workflow.modelPool[0];
   const startedAt = Date.now();
 
@@ -64,15 +46,12 @@ export async function executeOpenCodeGo(
     const durationMs = Date.now() - startedAt;
 
     if (!response.ok) {
-      // 429 (rate limit) özel olarak işaretleniyor -- ileride fallback
-      // zinciri eklendiğinde bu bilgi "sıradaki modele geç" kararı için
-      // kullanılacak.
       const bodyText = await response.text().catch(() => "");
-      const rateLimitNote = response.status === 429 ? " (rate limit / kota aşıldı)" : "";
+      const rateLimitNote = response.status === 429 ? " (rate limit / quota exceeded)" : "";
       return {
         success: false,
         httpStatus: response.status,
-        errorMessage: `API ${response.status} döndü${rateLimitNote}: ${bodyText.slice(0, 300)}`,
+        errorMessage: `API returned ${response.status}${rateLimitNote}: ${bodyText.slice(0, 300)}`,
         durationMs,
       };
     }
@@ -84,7 +63,7 @@ export async function executeOpenCodeGo(
       return {
         success: false,
         httpStatus: response.status,
-        errorMessage: `Beklenmeyen cevap şekli, "choices[0].message.content" bulunamadı: ${JSON.stringify(data).slice(0, 300)}`,
+        errorMessage: `Unexpected response shape, "choices[0].message.content" not found: ${JSON.stringify(data).slice(0, 300)}`,
         durationMs,
       };
     }
@@ -104,16 +83,17 @@ export async function executeOpenCodeGo(
     if (error instanceof Error && error.name === "AbortError") {
       return {
         success: false,
-        errorMessage: `İstek ${TIMEOUT_MS}ms içinde zaman aşımına uğradı`,
+        errorMessage: `Request timed out after ${TIMEOUT_MS}ms`,
         durationMs,
       };
     }
     return {
       success: false,
-      errorMessage: `Ağ/bağlantı hatası: ${error instanceof Error ? error.message : String(error)}`,
+      errorMessage: `Network/connection error: ${error instanceof Error ? error.message : String(error)}`,
       durationMs,
     };
   } finally {
     clearTimeout(timeoutId);
   }
 }
+

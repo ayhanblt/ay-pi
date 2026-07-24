@@ -1,79 +1,70 @@
 /**
- * WORKFLOW TİPLERİ
- * ------------------
- * Bu dosya, AY-PI'nin ürettiği "nihai karar"ın şeklini tanımlar.
- * Router, Context Assembler ve Prompt Builder'dan geçen her istek,
- * en sonunda bir WorkflowObject'e dönüşür. Pi'ye (veya herhangi bir
- * executor'a) giden TEK ŞEY budur — metin değil, yapılandırılmış bir karar.
+ * WORKFLOW TYPES
+ * --------------
+ * Defines the structure of the final decision object produced by AY-PI.
+ * Every request processed through the Router, Context Assembler, and Prompt Builder
+ * evaluates into a WorkflowObject. This structured decision object is consumed by
+ * downstream execution layers (such as Pi or a test CLI executor).
  */
 
-// Modelin ne kadar "düşüneceği". Pi'nin gerçek thinking level API'sine
-// birebir uyacak şekilde tanımlandı -- pi.setThinkingLevel() bu değerleri
-// aynen kabul ediyor, bizim ayrı bir eşleme tablosu tutmamıza gerek kalmadı.
+// Specifies the reasoning intensity level. Matches the native Pi thinking level API,
+// allowing direct usage with `pi.setThinkingLevel()`.
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-// Thinking seviyelerinin sıralı merdiveni -- escalateThinking() (router/index.ts)
-// bir seviye yukarı çıkarmak için bu diziyi kullanır.
+// Ordered hierarchy of thinking levels used by `escalateThinking()` (router/index.ts)
+// to step up reasoning intensity.
 export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
-// Context Assembler'ın ne kadar bağlam toplayabileceğinin sınırı.
-// "maxFiles": kaç dosya dahil edilebilir, "maxChars": toplam karakter tavanı.
+// Constraints governing context retrieval limits.
+// `maxFiles`: maximum allowed file count; `maxChars`: total character budget ceiling.
 export interface ContextBudget {
   maxFiles: number;
   maxChars: number;
 }
 
-// Modelin çıktısını sınırlayan kurallar. Bunlar sistem promptuna
-// Prompt Builder tarafından enjekte edilir (örn. "code_only" ->
-// "Sadece kod bloğu döndür, açıklama yazma").
+// Rules constraining model output format. Embedded into the system prompt
+// by Prompt Builder (e.g. "code_only" -> "Return code block only, without explanatory text").
 export type Constraint =
-  | "code_only"       // sadece kod, düz metin açıklama yok
-  | "no_comments"     // üretilen kodda yorum satırı olmasın
-  | "no_refactor"     // sadece istenen satırları değiştir, etrafına dokunma
-  | "no_code_output" // (örn. /plan için) kod değil, plan/metin üret
-  | "scope_limited";  // sadece enjekte edilen dosyalara bak, kapsam dışına çıkma+
-// Pi'nin bilinen tüm yerleşik araçları (gerçek tip tanımlarından doğrulandı:
-// node_modules/@earendil-works/pi-coding-agent/dist/core/tools/index.d.ts).
-// Bir policy kuralı "allowedTools" belirtmezse route() bu TAM listeyi kullanır
-// -- yani varsayılan davranış "kısıtlama yok" olur, sadece explicit olarak
-// dar bir liste verilen kurallar (örn. /quick) araç erişimini kısıtlar.
+  | "code_only"       // Output code only; omit plain text explanation
+  | "no_comments"     // Omit inline comments in generated code
+  | "no_refactor"     // Modify only target lines, preserving surrounding code
+  | "no_code_output"  // Generate plan/text instead of code (e.g. for /plan)
+  | "scope_limited";  // Restrict inspection to injected files only
+
+// Built-in tools supported by Pi.
+// If a policy rule does not specify `allowedTools`, `route()` defaults to this complete list,
+// permitting unrestricted tool access unless explicitly restricted by a rule (e.g. /quick).
 export const ALL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 export type ToolName = (typeof ALL_TOOLS)[number];
 
-// Router'ın çıktı token limiti üzerindeki kararı.
+// Router decision regarding output token limit constraints.
 export interface OutputConstraint {
   maxTokens: number;
 }
 
 /**
- * WorkflowObject: pipeline'ın TEK çıktısı.
- * Router bunu üretir, Context Assembler contextini doldurur,
- * Prompt Builder bundan sistem promptu inşa eder, Executor bunu
- * kullanarak gerçek model çağrısını yapar.
+ * WorkflowObject: The unified output of the routing pipeline.
+ * Produced by the Router, populated with context by Context Assembler,
+ * formatted into system prompts by Prompt Builder, and executed downstream.
  *
- * modelPool: sıralı model havuzu (örn. ["kimi-k2.7-code", "deepseek-v4-pro",
- * "minimax-m3"]). modelPool[0] "birincil" modeldir -- Faz 1 Executor'ı şu an
- * SADECE ilk modeli kullanıyor, otomatik fallback (ilk model hata verirse
- * ikinciye geçme) HENÜZ UYGULANMADI, ileride ayrı bir fazda eklenecek.
- * Havuzun geri kalanı şimdilik sadece policy dosyasında kayıtlı duruyor.
-* allowedTools: modelin bu turda erişebileceği araçlar. Router tarafından
-* belirlenir (policy'deki "allowedTools" alanından, yoksa ALL_TOOLS).
-* Extension bunu pi.setActiveTools() ile Pi'ye uygular -- örn. "/quick"
-* gibi dar bütçeli görevlerde bash/grep/find kapatılıp modelin kendi
-* başına tüm projeyi taramasının ÖNÜNE geçilir (bkz. sohbet geçmişi:
-* kontrolsüz keşif token patlaması sorunu).
- **/
+ * modelPool: Ordered list of candidate models (e.g. ["kimi-k2.7-code", "deepseek-v4-pro", "minimax-m3"]).
+ * `modelPool[0]` represents the primary target model.
+ *
+ * allowedTools: Tools accessible to the model during the current turn. Specified by the Router
+ * based on the active policy rule, and applied via `pi.setActiveTools()`.
+ */
 export interface WorkflowObject {
-  intent: string;              // örn. "/code", "/plan", "/chat"
-  provider: string;            // örn. "opencode-go", ileride "anthropic"
-  modelPool: string[];         // sıralı model havuzu, [0] birincil model
+  intent: string;              // e.g. "/code", "/plan", "/chat"
+  provider: string;            // e.g. "opencode-go", "anthropic"
+  modelPool: string[];         // Ordered model candidate pool, [0] is primary
   thinking: ThinkingLevel;
   contextBudget: ContextBudget;
   constraints: Constraint[];
   output: OutputConstraint;
-  allowedTools: ToolName[];          // modelin kullanmasına izin verilen araçlar (örn. ["read", "edit"])
+  allowedTools: ToolName[];          // Tools accessible to the model (e.g. ["read", "edit"])
   meta: {
-    ruleId: string;                        // hangi policy kuralı tetiklendi (debug/telemetry için)
-    diffLinesEscalationApplied: boolean;    // diffLines eşiği aşıldığı için thinking yükseltildi mi
+    ruleId: string;                        // Triggered policy rule identifier (for telemetry/debugging)
+    diffLinesEscalationApplied: boolean;    // Indicates whether thinking level was elevated due to diffLines threshold
   };
 }
+

@@ -1,34 +1,13 @@
 /**
  * PROMPT BUILDER
- * ===============
- * BURASI ÖNEMLİ: Pipeline'da "metin" ilk kez burada üretilir.
- *
- * Router hiç metin üretmedi (sadece WorkflowObject -- yapılandırılmış
- * karar). Context Assembler de metin üretmedi (sadece hangi dosyaların
- * seçileceğine karar verdi). Prompt Builder bu ikisini + gerçek dosya
- * İÇERİKLERİNİ birleştirip LLM'e gidecek asıl system/user prompt'u
- * inşa eder.
- *
- * GİRDİ:
- *   - WorkflowObject (Router'ın kararı: constraints, thinking, vs.)
- *   - seçilen dosyaların gerçek içerikleri (path + content)
- *   - kullanıcının orijinal rawText'i
- *
- * ÇIKTI:
- *   - { systemPrompt: string, userPrompt: string }
- *   Bu obje Executor'a (Faz 1'de düz fetch, Faz 2'de Pi) gidecek son duraktır.
- *
- * Neden ayrı bir modül: Router "hangi kural" derken, burası "o kural
- * pratikte ne anlama geliyor, LLM'e hangi cümleyle söylenir" işini yapar.
- * Constraint etiketleri (örn. "code_only") burada insan-okur cümlelere
- * çevriliyor. Bu çeviriyi TEK bir yerde tutmak, ileride constraint
- * cümlelerini değiştirmek istediğinde (örn. daha sert/yumuşak ifade)
- * tek dosyada değişiklik yapman yeterli olsun diyedir.
+ * ==============
+ * Assembles system and user prompts by combining resolved WorkflowObject decision parameters,
+ * injected file context, and the user's raw prompt text.
  */
 
 import type { Constraint, WorkflowObject } from "../workflow/types.js";
 
-/** Her constraint etiketinin karşılığı olan, LLM'e verilecek talimat cümlesi. */
+/** System prompt constraint instructions mapped per `Constraint` key. */
 const CONSTRAINT_TEXT: Record<Constraint, string> = {
   code_only:
     "Sadece kod bloğu döndür. Açıklama, giriş cümlesi veya sonuç yorumu ekleme.",
@@ -56,20 +35,13 @@ export interface BuiltPrompt {
   userPrompt: string;
 }
 
-/**
- * WorkflowObject'teki constraint etiketlerini gerçek talimat
- * cümlelerine çevirip birleştirir.
- */
+/** Formats array of `Constraint` keys into bulleted instruction strings for the system prompt. */
 function renderConstraints(constraints: Constraint[]): string {
   if (constraints.length === 0) return "";
   return constraints.map((c) => `- ${CONSTRAINT_TEXT[c]}`).join("\n");
 }
 
-/**
- * Seçilen dosyaları, LLM'in okuyacağı şekilde "### path\n```\ncontent\n```"
- * formatında birleştirir. Context Assembler'ın seçtiği dosyalar dışında
- * HİÇBİR şey buraya girmez -- bütçe kararı zaten önceki adımda verildi.
- */
+/** Formats assembled file paths and contents into Markdown code block sections. */
 function renderFiles(files: AssembledFile[]): string {
   if (files.length === 0) return "(Bu istek için dosya bağlamı seçilmedi.)";
   return files
@@ -78,13 +50,7 @@ function renderFiles(files: AssembledFile[]): string {
 }
 
 /**
- * ANA FONKSİYON.
- *
- * Örnek çağrı (cli.ts / Faz 2'de Pi adaptörü içinde):
- *
- *   const prompt = buildPrompt(workflow, selectedFiles, signal.rawText);
- *   // prompt.systemPrompt -> Executor'ın system mesajı olarak geçeceği metin
- *   // prompt.userPrompt   -> Executor'ın user mesajı olarak geçeceği metin
+ * Builds the final `{ systemPrompt, userPrompt }` payload object from workflow metadata and file contents.
  */
 export function buildPrompt(
   workflow: WorkflowObject,
@@ -108,3 +74,4 @@ export function buildPrompt(
 
   return { systemPrompt, userPrompt };
 }
+
