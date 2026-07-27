@@ -52,7 +52,7 @@ function detectDiffLinesFromGit(cwd: string): number | undefined {
 }
 
 /** Module-level state tracking behavior of the preceding turn for sticky routing. */
-let lastBehavior: "CHAT" | "PLAN" | "REVIEW" | "CODE" | null = null;
+
 
 export default function ayPi(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx: ExtensionContext) => {
@@ -80,7 +80,7 @@ export default function ayPi(pi: ExtensionAPI) {
 
     // 1) Construct RequestSignal from input prompt and git diff metadata
     const diffLines = detectDiffLinesFromGit(ctx.cwd);
-    const signal = buildSignal(rawText, { diffLines }, lastBehavior);
+    const signal = buildSignal(rawText, { diffLines });
 
     const logger = DebugLogger.getInstance();
     logger.start(rawText);
@@ -88,11 +88,11 @@ export default function ayPi(pi: ExtensionAPI) {
     // 2) Resolve behavior, workflow, and policy in sequence
     const policy = getPolicy();
     const behavior = await resolveBehavior(signal);
-    const workflowDefinition = resolveWorkflow(behavior.behavior, signal);
+    const workflowDefinition = await resolveWorkflow(behavior.behavior, signal);
     const workflow = resolvePolicy(signal, behavior.behavior, workflowDefinition, policy);
     const contextStrategy = resolveContextStrategy(signal, workflow);
     const piDecision = adaptForPi(workflow, contextStrategy);
-    lastBehavior = behavior.behavior;
+
 
     // 3) Apply model selection and thinking level via Pi SDK APIs
     let appliedModelInfo: string | undefined;

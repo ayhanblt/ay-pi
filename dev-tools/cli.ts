@@ -19,7 +19,6 @@ import { loadPolicies } from "@/policy/loader.js";
 import { resolveBehavior } from "@/behavior/resolver.js";
 import { resolveWorkflow } from "@/workflow/resolver.js";
 import { resolvePolicy } from "@/policy/resolver.js";
-import { executeOpenCodeGo } from "./executor/openCodeGoExecutor.js";
 
 loadEnvFile();
 
@@ -67,8 +66,8 @@ async function main() {
 
   // 2) Resolve behavior, workflow, and policy in sequence
   const policyFile = loadPolicies(new URL("../ay-pi.policy.json", import.meta.url).pathname);
-  const behavior = resolveBehavior(signal);
-  const workflowDefinition = resolveWorkflow(behavior.behavior, signal);
+  const behavior = await resolveBehavior(signal);
+  const workflowDefinition = await resolveWorkflow(behavior.behavior, signal);
   const workflow = resolvePolicy(signal, behavior.behavior, workflowDefinition, policyFile);
 
   console.log("\n[2] Workflow:");
@@ -78,29 +77,9 @@ async function main() {
   console.log(`    (allowed tools: ${workflow.allowedTools.join(", ")})`);
 
   // 3) Perform API call if --execute flag is set
+  // API execution is currently disabled/removed
   if (execute) {
-    const apiKey = process.env.OPENCODE_API_KEY;
-    if (!apiKey) {
-      console.error(
-        "\n[5] --execute flag was passed but OPENCODE_API_KEY is not defined."
-      );
-    } else {
-      console.log("\n[3] Executing API call...");
-      const execution = await executeOpenCodeGo(workflow, rawText, apiKey);
-      if (execution.success) {
-        console.log(`    Success (${execution.durationMs}ms). Response:\n`);
-        console.log(execution.content);
-        if (execution.usage) {
-          console.log(
-            `\n    (token usage: input=${execution.usage.inputTokens ?? "?"}, output=${execution.usage.outputTokens ?? "?"})`
-          );
-        }
-      } else {
-        console.error(`    Failed (${execution.durationMs}ms): ${execution.errorMessage}`);
-      }
-    }
-  } else {
-    console.log("\n[3] --execute flag omitted; skipping API call.");
+    console.error("\n[3] --execute flag is not supported because executor is missing.");
   }
 }
 

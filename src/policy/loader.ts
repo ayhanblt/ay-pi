@@ -3,13 +3,14 @@ import { z } from "zod";
 import type { PolicyFile } from "@/policy/types.js";
 import { ALL_TOOLS } from "@/workflow/types.js";
 
-const BehaviorSchema = z.enum(["CHAT", "PLAN", "REVIEW", "CODE"]);
+const BehaviorSchema = z.enum(["CHAT", "PLAN", "REVIEW", "CODE", "SUGGEST"]);
 const ThinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
 const ConstraintSchema = z.enum([
   "code_only",
   "no_comments",
   "no_refactor",
   "no_code_output",
+  "suggest_only",
   "scope_limited",
 ]);
 const ToolNameSchema = z.enum(ALL_TOOLS);

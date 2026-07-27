@@ -6,8 +6,6 @@ export interface RequestSignal {
   diffLines?: number;
   changedFileCount?: number;
   openFileCount?: number;
-  hasQuickKeyword?: boolean;
   subcommand?: string;
-  previousBehavior?: Behavior | null;
 }
 

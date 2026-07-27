@@ -2,21 +2,40 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Hardcoded absolute path for temporary debugging to ensure it is always written exactly here
-const LOG_FILE = "/Users/ayhanblt/Desktop/projects/ay-pi/ay-pi.debug.log";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function getProjectRoot(currentDir: string): string {
+    const root = path.parse(currentDir).root;
+    let dir = currentDir;
+    while (dir !== root) {
+        if (fs.existsSync(path.join(dir, 'package.json'))) {
+            return dir;
+        }
+        dir = path.dirname(dir);
+    }
+    return currentDir; // fallback
+}
+
+const PROJECT_ROOT = getProjectRoot(__dirname);
+
+// Dynamically resolved absolute paths
+const LOG_FILE = path.join(PROJECT_ROOT, "ay-pi.debug.log");
+// Structured, one-record-per-line telemetry log (machine-readable).
+const TELEMETRY_FILE = path.join(PROJECT_ROOT, "ay-pi.telemetry.jsonl");
 
 export class DebugLogger {
   private static instance = new DebugLogger();
 
   public enabled = true;
   private startTime: number = 0;
+  private startTimestamp: string = "";
   private logs: string[] = [];
 
   // Data bags
   public input: string = "";
   
   public ruleEngine = {
-    keywords: [] as string[],
     regex: [] as string[],
     confidence: 0,
     decision: "UNRESOLVED"
@@ -34,8 +53,10 @@ export class DebugLogger {
 
   public workflowResolver = {
     behavior: "",
+    explicitCommand: undefined as string | undefined,
     scores: {} as Record<string, number>,
-    selected: ""
+    selected: "",
+    isDefaultFallback: false
   };
 
   public policy = {
@@ -73,11 +94,12 @@ export class DebugLogger {
   public start(input: string) {
     if (!this.enabled) return;
     this.startTime = performance.now();
+    this.startTimestamp = new Date().toISOString();
     this.input = input;
     // reset state
-    this.ruleEngine = { keywords: [], regex: [], confidence: 0, decision: "UNRESOLVED" };
+    this.ruleEngine = { regex: [], confidence: 0, decision: "UNRESOLVED" };
     this.semanticEngine = { invoked: false, modelLoadedBefore: false, loadingModel: false, embeddingTimeMs: 0, scores: {}, threshold: 0, decision: "UNRESOLVED" };
-    this.workflowResolver = { behavior: "", scores: {}, selected: "" };
+    this.workflowResolver = { behavior: "", explicitCommand: undefined, scores: {}, selected: "", isDefaultFallback: false };
     this.policy = { selected: "", reasoning: "", model: "", tools: [] };
     this.adapter = { target: "", name: "", systemPrompt: "" };
     this.finalResult = { behavior: "", workflow: "", policy: "" };
@@ -93,7 +115,7 @@ export class DebugLogger {
     output += `Input:\n"${this.input}"\n\n`;
     
     output += `----------------------------------------\n\nRule Engine\n\n`;
-    output += `Keywords:\n[${this.ruleEngine.keywords.join(", ")}]\n\n`;
+
     output += `Regex:\n[${this.ruleEngine.regex.join(", ")}]\n\n`;
     output += `Confidence:\n${this.ruleEngine.confidence.toFixed(2)}\n\n`;
     output += `Decision:\n${this.ruleEngine.decision}\n\n`;
@@ -119,6 +141,9 @@ export class DebugLogger {
 
     output += `----------------------------------------\n\nWorkflow Resolver\n\n`;
     output += `Behavior:\n${this.workflowResolver.behavior}\n\n`;
+    if (this.workflowResolver.explicitCommand) {
+      output += `Explicit Command:\n${this.workflowResolver.explicitCommand}\n\n`;
+    }
     if (Object.keys(this.workflowResolver.scores).length > 0) {
       output += `Workflow Scores:\n\n`;
       for (const [wf, score] of Object.entries(this.workflowResolver.scores)) {
@@ -127,6 +152,9 @@ export class DebugLogger {
       output += `\n`;
     }
     output += `Selected Workflow:\n\n${this.workflowResolver.selected}\n\n`;
+    if (this.workflowResolver.isDefaultFallback) {
+      output += `Default Fallback:\nYES\n\n`;
+    }
 
     output += `----------------------------------------\n\nPolicy\n\n`;
     output += `Selected Policy:\n\n${this.policy.selected}\n\n`;
@@ -176,6 +204,53 @@ export class DebugLogger {
       fs.appendFileSync(LOG_FILE, output);
     } catch (err) {
       console.error("Failed to write debug log to", LOG_FILE, err);
+    }
+
+    // Structured telemetry record (one JSON object per line) for machine analysis.
+    // Mirrors the historical telemetry schema (timestamp + signal + workflow) and
+    // extends it with the behavior/workflow/source/confidence now produced by routing.
+    const record = {
+      timestamp: this.startTimestamp,
+      routingTimeMs: totalTime,
+      input: this.input,
+      ruleEngine: {
+        regex: this.ruleEngine.regex,
+        confidence: Number(this.ruleEngine.confidence.toFixed(3)),
+        decision: this.ruleEngine.decision,
+      },
+      semanticEngine: this.semanticEngine.invoked
+        ? {
+            invoked: true,
+            embeddingTimeMs: this.semanticEngine.embeddingTimeMs,
+            scores: Object.fromEntries(
+              Object.entries(this.semanticEngine.scores).map(([k, v]) => [
+                k,
+                Number(v.score.toFixed(3)),
+              ])
+            ),
+            threshold: this.semanticEngine.threshold,
+            decision: this.semanticEngine.decision,
+          }
+        : { invoked: false },
+      workflow: {
+        behavior: this.finalResult.behavior,
+        workflow: this.finalResult.workflow,
+        policy: this.finalResult.policy,
+        reasoning: this.policy.reasoning,
+        model: this.policy.model.split(",")[0].trim(),
+        tools: this.policy.tools,
+      },
+      context: {
+        focusTargets: this.contextStrategy.focusTargets,
+        repositoryScan: this.contextStrategy.repositoryScan,
+        expectedGoal: this.contextStrategy.expectedGoal,
+      },
+    };
+
+    try {
+      fs.appendFileSync(TELEMETRY_FILE, JSON.stringify(record) + "\n");
+    } catch (err) {
+      console.error("Failed to write telemetry to", TELEMETRY_FILE, err);
     }
   }
 }

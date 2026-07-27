@@ -1,7 +1,7 @@
 {
   "settings": {
     "diffLinesEscalationThreshold": 60,
-    "diffLinesEscalationBehaviors": ["PLAN", "CODE"]
+    "diffLinesEscalationBehaviors": ["PLAN", "CODE", "SUGGEST"]
   },
   "policies": [
     {
@@ -204,6 +204,50 @@
       "contextBudget": { "maxFiles": 6, "maxChars": 60000 },
       "constraints": ["code_only"],
       "output": { "maxTokens": 1500 }
+    },
+    {
+      "behavior": "SUGGEST",
+      "workflow": "color",
+      "provider": "opencode-go",
+      "pool": ["glm-5.2", "qwen3.7-max"],
+      "thinking": "medium",
+      "contextBudget": { "maxFiles": 3, "maxChars": 20000 },
+      "constraints": ["suggest_only"],
+      "output": { "maxTokens": 1200 },
+      "allowedTools": ["read", "grep", "find"]
+    },
+    {
+      "behavior": "SUGGEST",
+      "workflow": "approach",
+      "provider": "opencode-go",
+      "pool": ["glm-5.2", "qwen3.7-max"],
+      "thinking": "medium",
+      "contextBudget": { "maxFiles": 3, "maxChars": 20000 },
+      "constraints": ["suggest_only"],
+      "output": { "maxTokens": 1200 },
+      "allowedTools": ["read", "grep", "find"]
+    },
+    {
+      "behavior": "SUGGEST",
+      "workflow": "technology",
+      "provider": "opencode-go",
+      "pool": ["glm-5.2", "qwen3.7-max"],
+      "thinking": "medium",
+      "contextBudget": { "maxFiles": 3, "maxChars": 20000 },
+      "constraints": ["suggest_only"],
+      "output": { "maxTokens": 1200 },
+      "allowedTools": ["read", "grep", "find"]
+    },
+    {
+      "behavior": "SUGGEST",
+      "workflow": "design-option",
+      "provider": "opencode-go",
+      "pool": ["glm-5.2", "qwen3.7-max"],
+      "thinking": "medium",
+      "contextBudget": { "maxFiles": 3, "maxChars": 20000 },
+      "constraints": ["suggest_only"],
+      "output": { "maxTokens": 1200 },
+      "allowedTools": ["read", "grep", "find"]
     }
   ]
 }

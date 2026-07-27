@@ -19,7 +19,7 @@ export interface PolicyEntry {
   allowedTools?: ToolName[];
 }
 
-export interface PolicySettings {
+interface PolicySettings {
   diffLinesEscalationThreshold: number;
   diffLinesEscalationBehaviors: Behavior[];
 }

@@ -11,6 +11,10 @@ const CONSTRAINT_TEXT: Record<Constraint, string> = {
     "veya yapıyı yeniden düzenleme (refactor etme).",
   no_code_output:
     "Bu bir plan/analiz isteğidir. Kod bloğu üretme, sadece adım adım plan veya açıklama yaz.",
+  suggest_only:
+    "Bu bir öneri isteğidir. Kodu dosyalara yazma veya uygulama. Öneriyi metin olarak sun, " +
+    "seçenekleri ve avantajlarını açıkla. Opsiyonel olarak kod snippet örnekleri gösterebilirsin " +
+    "ama bunlar sadece referans amaçlıdır, doğrudan uygulanmamalıdır.",
   scope_limited:
     "SADECE hedef ajanın mevcut bağlamında verilen dosyalarla çalış. " +
     "Bağlam yetersizse hangi dosyanın gerektiğini sor.",

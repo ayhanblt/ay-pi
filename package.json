@@ -36,6 +36,11 @@
   },
   "scripts": {
     "build:embeddings": "node scripts/build-embeddings.js",
+    "test": "node --test --import tsx 'src/**/*.test.ts'",
     "build": "npm run build:embeddings && npx esbuild extension/ay-pi/src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/pi-coding-agent --external:@xenova/transformers --external:onnxruntime-node --external:sharp --outfile=extension/ay-pi/dist/index.js"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "~5.7"
   }
 }

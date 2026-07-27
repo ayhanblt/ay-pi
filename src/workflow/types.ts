@@ -28,6 +28,7 @@ export type Constraint =
   | "no_comments"     // Omit inline comments in generated code
   | "no_refactor"     // Modify only target lines, preserving surrounding code
   | "no_code_output"  // Generate plan/text instead of code (e.g. for /plan)
+  | "suggest_only"   // Do not write/apply code to files. Present suggestion as text; optional code snippets allowed as examples.
   | "scope_limited";  // Restrict inspection to injected files only
 
 // Built-in tools supported by Pi.
