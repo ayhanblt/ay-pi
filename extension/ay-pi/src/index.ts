@@ -2,26 +2,23 @@
  * EXTENSION INDEX
  * ===============
  * Entry point for the AY-PI Pi Coding Agent extension.
- * Connects prompt routing, model selection, thinking levels, tool restrictions,
- * and context injection into Pi's lifecycle events.
+ * Connects behavior/workflow selection, policy, and Pi adaptation into Pi's lifecycle events.
  */
 
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { execSync } from "node:child_process";
 
-import { buildSignal, route } from "../../../src/router/index.js";
-import type { PolicyFile } from "../../../src/router/types.js";
-import { loadPolicies } from "../../../src/config/policy.loader.js";
-import { selectFiles } from "../../../src/context/assembler.js";
-import {
-  getChangedFilePaths,
-  buildFileCandidates,
-  loadFileContents,
-} from "../../../src/context/gitContext.js";
-import { buildPrompt } from "../../../src/prompt/builder.js";
-import { logDecision } from "../../../src/telemetry/logger.js";
-import { ALL_TOOLS } from "../../../src/workflow/types.js";
-import { detectMisplacedCliCommand } from "../../../src/router/cliCommandGuard.js";
+import { buildSignal } from "@/input/signal.js";
+import type { PolicyFile } from "@/policy/types.js";
+import { loadPolicies } from "@/policy/loader.js";
+import { resolveBehavior } from "@/behavior/resolver.js";
+import { resolveWorkflow } from "@/workflow/resolver.js";
+import { resolvePolicy } from "@/policy/resolver.js";
+import { resolveContextStrategy } from "@/context/strategy.js";
+import { adaptForPi } from "@/adapter/pi.js";
+import { ALL_TOOLS } from "@/workflow/types.js";
+import { detectMisplacedCliCommand } from "@/input/cliGuard.js";
+import { DebugLogger } from "@/telemetry/debugLogger.js";
 
 // Policy configuration file path
 const POLICY_PATH = new URL("../../../ay-pi.policy.json", import.meta.url).pathname;
@@ -54,8 +51,8 @@ function detectDiffLinesFromGit(cwd: string): number | undefined {
   }
 }
 
-/** Module-level state tracking intent of the preceding turn for sticky routing. */
-let lastIntent: string | null = null;
+/** Module-level state tracking behavior of the preceding turn for sticky routing. */
+let lastBehavior: "CHAT" | "PLAN" | "REVIEW" | "CODE" | null = null;
 
 export default function ayPi(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx: ExtensionContext) => {
@@ -83,19 +80,26 @@ export default function ayPi(pi: ExtensionAPI) {
 
     // 1) Construct RequestSignal from input prompt and git diff metadata
     const diffLines = detectDiffLinesFromGit(ctx.cwd);
-    const signal = buildSignal(rawText, { diffLines }, lastIntent);
-    lastIntent = signal.command;
+    const signal = buildSignal(rawText, { diffLines }, lastBehavior);
 
-    // 2) Evaluate policy rules and resolve workflow parameters
+    const logger = DebugLogger.getInstance();
+    logger.start(rawText);
+
+    // 2) Resolve behavior, workflow, and policy in sequence
     const policy = getPolicy();
-    const workflow = route(signal, policy);
+    const behavior = await resolveBehavior(signal);
+    const workflowDefinition = resolveWorkflow(behavior.behavior, signal);
+    const workflow = resolvePolicy(signal, behavior.behavior, workflowDefinition, policy);
+    const contextStrategy = resolveContextStrategy(signal, workflow);
+    const piDecision = adaptForPi(workflow, contextStrategy);
+    lastBehavior = behavior.behavior;
 
     // 3) Apply model selection and thinking level via Pi SDK APIs
     let appliedModelInfo: string | undefined;
     let modelApplied = false;
 
-    for (const modelId of workflow.modelPool) {
-      const model = ctx.modelRegistry.find(workflow.provider, modelId);
+    for (const modelId of piDecision.modelPool) {
+      const model = ctx.modelRegistry.find(piDecision.provider, modelId);
       if (model) {
         const applied = await pi.setModel(model);
         if (applied) {
@@ -108,61 +112,45 @@ export default function ayPi(pi: ExtensionAPI) {
 
     if (!modelApplied) {
       ctx.ui.notify(
-        `AY-PI: None of the candidate models (${workflow.modelPool.join(", ")}) were available. Active model unchanged.`,
+        `AY-PI: None of the candidate models (${piDecision.modelPool.join(", ")}) were available. Active model unchanged.`,
         "error"
       );
     }
-    pi.setThinkingLevel(workflow.thinking);
+    pi.setThinkingLevel(piDecision.thinking);
 
     const appliedThinking = pi.getThinkingLevel();
-    const appliedModelObj = ctx.model;
-    const appliedModelId = appliedModelObj ? appliedModelObj.id : undefined;
-
-    if (appliedThinking !== workflow.thinking) {
+    if (appliedThinking !== piDecision.thinking) {
       ctx.ui.notify(
-        `AY-PI: Requested thinking '${workflow.thinking}', active thinking level is '${appliedThinking}'.`,
+        `AY-PI: Requested thinking '${piDecision.thinking}', active thinking level is '${appliedThinking}'.`,
         "info"
       );
     }
 
     // 3b) Restrict active tools based on workflow configuration
-    pi.setActiveTools(workflow.allowedTools);
+    pi.setActiveTools(piDecision.allowedTools);
 
-    // 4) Discover modified files, assemble context budget, and build prompt text
-    const changedPaths = getChangedFilePaths(ctx.cwd);
-    const candidates = buildFileCandidates(changedPaths, ctx.cwd);
-    const selected = selectFiles(candidates, workflow.contextBudget);
-    const assembledFiles = loadFileContents(selected, ctx.cwd);
-    const prompt = buildPrompt(workflow, assembledFiles, rawText);
-
-    // 5) Update status bar with active routing state
+    // 4) Update status bar with active routing state
     const toolsNote =
-      workflow.allowedTools.length < ALL_TOOLS.length
-        ? ` (tools: ${workflow.allowedTools.join(",")})`
+      piDecision.allowedTools.length < ALL_TOOLS.length
+        ? ` (tools: ${piDecision.allowedTools.join(",")})`
         : "";
 
     ctx.ui.setStatus(
       "ay-pi",
-      `AY-PI: ${workflow.provider}/${appliedModelInfo ?? workflow.modelPool[0]} · ${appliedThinking}` +
+      `AY-PI: ${piDecision.statusText} · ${piDecision.provider}/${appliedModelInfo ?? piDecision.modelPool[0]} · ${appliedThinking}` +
       (workflow.meta.diffLinesEscalationApplied ? " (↑ diffLines escalated)" : "") +
       toolsNote
     );
 
-    // 6) Log telemetry entry
-    logDecision(signal, workflow, undefined, appliedModelId, appliedThinking);
-
-    // 7) Inject system prompt constraints and assembled context payload
-    const result: { systemPrompt: string; message?: { customType: string; content: string; display: boolean } } = {
-      systemPrompt: `${event.systemPrompt}\n\n${prompt.systemPrompt}`,
+    // 5) Inject adapter-provided target instructions
+    const result: { systemPrompt: string } = {
+      systemPrompt: `${event.systemPrompt}\n\n${piDecision.systemPrompt}`,
     };
 
-    if (assembledFiles.length > 0) {
-      result.message = {
-        customType: "ay-pi-context",
-        content: prompt.userPrompt,
-        display: false,
-      };
-    }
+    logger.finalResult.behavior = piDecision.behavior;
+    logger.finalResult.workflow = piDecision.workflowId;
+    logger.finalResult.policy = logger.policy.selected;
+    logger.print();
 
     return result;
   });
@@ -171,9 +159,9 @@ export default function ayPi(pi: ExtensionAPI) {
     description: "Display AY-PI status and active policy metrics",
     handler: async (args, commandCtx: ExtensionCommandContext) => {
       const policy = getPolicy();
-      const ruleCount = policy.routes.reduce((acc, r) => acc + r.rules.length, 0);
+      const policyCount = policy.policies.length;
       commandCtx.ui.notify(
-        `AY-PI Active.\nPolicy: ${policy.routes.length} intents, ${ruleCount} rules loaded.\nTelemetry: ay-pi.telemetry.jsonl`,
+        `AY-PI Active.\nPolicy: ${policyCount} workflow policies loaded.`,
         "info"
       );
     },
@@ -188,4 +176,3 @@ export default function ayPi(pi: ExtensionAPI) {
     },
   });
 }
-

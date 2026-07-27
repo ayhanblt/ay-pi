@@ -1,10 +1,3 @@
-/**
- * CLI COMMAND GUARD
- * -----------------
- * Detects shell CLI commands typed inadvertently into the agent chat prompt (e.g. `pi update`).
- * Pure deterministic pattern matching without external SDK dependencies.
- */
-
 interface CliOnlyCommand {
   pattern: RegExp;
   displayName: string;
@@ -17,9 +10,6 @@ const CLI_ONLY_COMMANDS: CliOnlyCommand[] = [
   { pattern: /^pi\s+login(\s|$)/i, displayName: "pi login" },
 ];
 
-/**
- * Returns the matching command name if `rawText` represents a CLI command; otherwise returns `null`.
- */
 export function detectMisplacedCliCommand(rawText: string): string | null {
   const trimmed = rawText.trim();
   for (const cmd of CLI_ONLY_COMMANDS) {

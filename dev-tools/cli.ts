@@ -1,7 +1,7 @@
 /**
  * CLI TEST HARNESS
  * ================
- * Command line utility for testing AY-PI routing logic, prompt assembly,
+ * Command line utility for testing AY-PI behavior/workflow selection,
  * and optional OpenCode Go API execution outside the Pi extension environment.
  *
  * USAGE (inspect decision only):
@@ -13,16 +13,13 @@
  */
 
 import { execSync } from "node:child_process";
-import { loadEnvFile } from "../src/config/env.js";
-import { buildSignal, route } from "../src/router/index.js";
-import { classifyText } from "../src/router/textClassifier.js";
-import { loadPolicies } from "../src/config/policy.loader.js";
-import { selectFiles } from "../src/context/assembler.js";
-import { getChangedFilePaths, buildFileCandidates, loadFileContents } from "../src/context/gitContext.js";
-import { buildPrompt } from "../src/prompt/builder.js";
-import { logDecision } from "../src/telemetry/logger.js";
+import { loadEnvFile } from "@/config/env.js";
+import { buildSignal } from "@/input/signal.js";
+import { loadPolicies } from "@/policy/loader.js";
+import { resolveBehavior } from "@/behavior/resolver.js";
+import { resolveWorkflow } from "@/workflow/resolver.js";
+import { resolvePolicy } from "@/policy/resolver.js";
 import { executeOpenCodeGo } from "./executor/openCodeGoExecutor.js";
-import type { ExecutionResult } from "../src/telemetry/types.js";
 
 loadEnvFile();
 
@@ -68,40 +65,19 @@ async function main() {
   console.log("\n[1] RequestSignal:");
   console.log(signal);
 
-  if (signal.command === "/chat") {
-    const debug = classifyText(rawText);
-    console.log(
-      `    (classification detail: method=${debug.method}, confidence=${debug.confidence.toFixed(3)})`
-    );
-  }
-
-  // 2) Load policy definition and evaluate routing rules
+  // 2) Resolve behavior, workflow, and policy in sequence
   const policyFile = loadPolicies(new URL("../ay-pi.policy.json", import.meta.url).pathname);
-  const workflow = route(signal, policyFile);
+  const behavior = resolveBehavior(signal);
+  const workflowDefinition = resolveWorkflow(behavior.behavior, signal);
+  const workflow = resolvePolicy(signal, behavior.behavior, workflowDefinition, policyFile);
 
-  console.log("\n[2] WorkflowObject:");
+  console.log("\n[2] Workflow:");
   console.log(workflow);
+  console.log(`    (behavior: ${workflow.behavior}, workflow: ${workflow.workflow.id})`);
   console.log(`    (primary model: ${workflow.provider}/${workflow.modelPool[0]})`);
   console.log(`    (allowed tools: ${workflow.allowedTools.join(", ")})`);
 
-  // 3) Discover modified files and select candidates within context budget
-  const changedPaths = getChangedFilePaths();
-  const candidates = buildFileCandidates(changedPaths);
-  const selected = selectFiles(candidates, workflow.contextBudget);
-
-  console.log("\n[3] Selected files:");
-  console.log(selected.length > 0 ? selected.map((f) => f.path) : "(no changed files found / not a git repo)");
-
-  // 4) Load file contents and build system/user prompts
-  const assembledFiles = loadFileContents(selected);
-  const prompt = buildPrompt(workflow, assembledFiles, rawText);
-
-  console.log("\n[4] Assembled prompt:");
-  console.log("--- systemPrompt ---\n" + prompt.systemPrompt);
-  console.log("--- userPrompt ---\n" + prompt.userPrompt);
-
-  // 5) Perform API call if --execute flag is set
-  let execution: ExecutionResult | undefined;
+  // 3) Perform API call if --execute flag is set
   if (execute) {
     const apiKey = process.env.OPENCODE_API_KEY;
     if (!apiKey) {
@@ -109,8 +85,8 @@ async function main() {
         "\n[5] --execute flag was passed but OPENCODE_API_KEY is not defined."
       );
     } else {
-      console.log("\n[5] Executing API call...");
-      execution = await executeOpenCodeGo(workflow, prompt, apiKey);
+      console.log("\n[3] Executing API call...");
+      const execution = await executeOpenCodeGo(workflow, rawText, apiKey);
       if (execution.success) {
         console.log(`    Success (${execution.durationMs}ms). Response:\n`);
         console.log(execution.content);
@@ -124,14 +100,8 @@ async function main() {
       }
     }
   } else {
-    console.log("\n[5] --execute flag omitted; skipping API call.");
+    console.log("\n[3] --execute flag omitted; skipping API call.");
   }
-
-  // 6) Log telemetry entry
-  logDecision(signal, workflow, execution);
-
-  console.log("\n=> Logged decision to ay-pi.telemetry.jsonl.\n");
 }
 
 main();
-

@@ -1,16 +1,10 @@
-/**
- * POLICY LOADER
- * -------------
- * Reads `ay-pi.policy.json`, validates its runtime structure against a Zod schema,
- * and returns a typed `PolicyFile` object ({ settings, routes }).
- */
-
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import type { PolicyFile } from "../router/types.js";
+import type { PolicyFile } from "@/policy/types.js";
+import { ALL_TOOLS } from "@/workflow/types.js";
 
+const BehaviorSchema = z.enum(["CHAT", "PLAN", "REVIEW", "CODE"]);
 const ThinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
-
 const ConstraintSchema = z.enum([
   "code_only",
   "no_comments",
@@ -18,8 +12,7 @@ const ConstraintSchema = z.enum([
   "no_code_output",
   "scope_limited",
 ]);
-
-const ToolNameSchema = z.enum(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+const ToolNameSchema = z.enum(ALL_TOOLS);
 
 const ContextBudgetSchema = z.object({
   maxFiles: z.number(),
@@ -30,30 +23,26 @@ const OutputConstraintSchema = z.object({
   maxTokens: z.number(),
 });
 
-const RouteRuleSchema = z.object({
-  when: z.record(z.string(), z.string()).optional(),
+const PolicyEntrySchema = z.object({
+  behavior: BehaviorSchema,
+  workflow: z.string().min(1),
   provider: z.string(),
-  pool: z.array(z.string()).min(1, "Must contain at least one model"),
-  allowedTools: z.array(ToolNameSchema).min(1).optional(),
+  pool: z.array(z.string()).min(1),
   thinking: ThinkingLevelSchema,
   contextBudget: ContextBudgetSchema,
   constraints: z.array(ConstraintSchema),
   output: OutputConstraintSchema.optional(),
-});
-
-const RoutePolicySchema = z.object({
-  intent: z.string(),
-  rules: z.array(RouteRuleSchema).min(1, "Rules array cannot be empty"),
+  allowedTools: z.array(ToolNameSchema).min(1).optional(),
 });
 
 const PolicySettingsSchema = z.object({
   diffLinesEscalationThreshold: z.number().positive(),
-  diffLinesEscalationIntents: z.array(z.string()).min(1),
+  diffLinesEscalationBehaviors: z.array(BehaviorSchema).min(1),
 });
 
 const PolicyFileSchema = z.object({
   settings: PolicySettingsSchema,
-  routes: z.array(RoutePolicySchema).min(1),
+  policies: z.array(PolicyEntrySchema).min(1),
 });
 
 export function loadPolicies(filePath: string): PolicyFile {
@@ -70,4 +59,3 @@ export function loadPolicies(filePath: string): PolicyFile {
 
   return result.data as PolicyFile;
 }
-

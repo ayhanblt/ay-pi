@@ -5,202 +5,15 @@ var __export = (target, all) => {
 };
 
 // src/index.ts
-import { execSync as execSync2 } from "node:child_process";
+import { execSync } from "node:child_process";
 
-// ../../src/workflow/types.ts
-var THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
-var ALL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-
-// ../../src/router/rules.ts
-function evalNumericExpr(value, expr) {
-  if (value === void 0) return false;
-  const match = expr.match(/^(<=|>=|<|>|==)(\d+)$/);
-  if (!match) {
-    throw new Error(`Invalid condition expression: "${expr}"`);
-  }
-  const [, operator, numberText] = match;
-  const threshold = Number(numberText);
-  switch (operator) {
-    case "<":
-      return value < threshold;
-    case "<=":
-      return value <= threshold;
-    case ">":
-      return value > threshold;
-    case ">=":
-      return value >= threshold;
-    case "==":
-      return value === threshold;
-    default:
-      return false;
-  }
-}
-function evalBooleanExpr(value, expr) {
-  if (value === void 0) return false;
-  return String(value) === expr;
-}
-function evalStringExpr(value, expr) {
-  if (value === void 0) return false;
-  const match = expr.match(/^==(.+)$/);
-  if (!match) {
-    throw new Error(`Invalid string condition expression: "${expr}" (expected format: "==value")`);
-  }
-  return value === match[1];
-}
-function matchesWhen(signal, rule) {
-  if (!rule.when) return true;
-  return Object.entries(rule.when).every(([key, expr]) => {
-    const fieldValue = signal[key];
-    if (typeof fieldValue === "boolean") {
-      return evalBooleanExpr(fieldValue, expr);
-    }
-    if (typeof fieldValue === "string") {
-      return evalStringExpr(fieldValue, expr);
-    }
-    return evalNumericExpr(fieldValue, expr);
-  });
-}
-function findMatchingRule(signal, rules) {
-  const found = rules.find((rule) => matchesWhen(signal, rule));
-  if (!found) {
-    throw new Error(
-      `No matching rule found. Signal: ${JSON.stringify(signal)}. Ensure a fallback rule is defined in the policy.`
-    );
-  }
-  return found;
-}
-
-// ../../src/router/keywords.ts
-var CHAT_KEYWORDS = [
-  // Greetings / courtesies (Turkish & English)
-  "selam",
-  "merhaba",
-  "naber",
-  "nas\u0131ls\u0131n",
-  "g\xFCnayd\u0131n",
-  "iyi ak\u015Famlar",
-  "iyi geceler",
-  "ho\u015F\xE7a kal",
-  "g\xF6r\xFC\u015F\xFCr\xFCz",
-  "te\u015Fekk\xFCr",
-  "te\u015Fekk\xFCrler",
-  "sa\u011Fol",
-  "sa\u011F ol",
-  "rica ederim",
-  "kolay gelsin",
-  "hi",
-  "hello",
-  "hey",
-  "how are you",
-  "good morning",
-  "good night",
-  "thanks",
-  "thank you",
-  "bye",
-  "goodbye",
-  // Casual conversational phrases
-  "ne haber",
-  "nas\u0131l gidiyor",
-  "iyiyim",
-  "iyilik"
-];
-var DEEP_THINKING_KEYWORDS = [
-  // Architecture / System Design
-  "mimari",
-  "mimarisi",
-  "tasar\u0131m",
-  "tasarla",
-  "architecture",
-  "design",
-  "yap\u0131 ta\u015F\u0131",
-  "sistem tasar\u0131m\u0131",
-  // Evaluation / Trade-offs / Comparison
-  "trade-off",
-  "tradeoff",
-  "kar\u015F\u0131la\u015Ft\u0131r",
-  "k\u0131yasla",
-  "hangisi daha iyi",
-  "art\u0131 eksi",
-  "avantaj dezavantaj",
-  "compare",
-  "vs",
-  "yerine",
-  // In-depth Analysis / Causality
-  "neden",
-  "ni\xE7in",
-  "niye",
-  "nas\u0131l \xE7al\u0131\u015F\u0131yor",
-  "nas\u0131l \xE7al\u0131\u015F\u0131r",
-  "alt\u0131nda ne var",
-  "i\xE7 mekanizma",
-  "why",
-  "how does",
-  "explain",
-  // Strategy / Best Practices
-  "strateji",
-  "yakla\u015F\u0131m",
-  "alternatif",
-  "\xF6neri",
-  "\xF6nerir misin",
-  "hangi y\xF6ntem",
-  "en iyi pratik",
-  "best practice",
-  "yol haritas\u0131",
-  "roadmap",
-  "\xF6l\xE7eklenebilir",
-  "scalability",
-  "performans etkisi"
-];
-
-// ../../src/router/textClassifier.ts
-function containsKeyword(text, keyword) {
-  if (keyword.includes(" ")) {
-    return text.includes(keyword);
-  }
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u");
-  return pattern.test(text);
-}
-function matchKeywords(rawText) {
-  const lower = rawText.toLowerCase();
-  const isChat = CHAT_KEYWORDS.some((k) => containsKeyword(lower, k));
-  const isDeep = DEEP_THINKING_KEYWORDS.some((k) => containsKeyword(lower, k));
-  if (isChat && !isDeep) return "chat";
-  if (isDeep && !isChat) return "deep";
-  return null;
-}
-function classifyText(rawText) {
-  const keywordResult = matchKeywords(rawText);
-  if (keywordResult) {
-    return { category: keywordResult, confidence: 1, method: "keyword" };
-  }
-  return { category: "uncertain", confidence: 0, method: "none" };
-}
-
-// ../../src/router/stickyRouting.ts
-var APPLY_KEYWORDS = ["uygula", "apply", "devam et", "kodla", "code it", "go ahead", "implement"];
-function containsApplyKeyword(text) {
-  const lower = text.trim().toLowerCase();
-  return APPLY_KEYWORDS.some((k) => {
-    if (k.includes(" ")) return lower.includes(k);
-    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(lower);
-  });
-}
-function detectStickyCodeIntent(rawText, currentIntent, previousIntent) {
-  if (currentIntent !== "/chat") return null;
-  if (previousIntent !== "/plan") return null;
-  if (!containsApplyKeyword(rawText)) return null;
-  return "/code";
-}
-
-// ../../src/router/index.ts
+// ../../src/input/signal.ts
 function detectIntent(rawText) {
   const trimmed = rawText.trim();
   if (trimmed.startsWith("/")) {
     return trimmed.split(/\s+/)[0];
   }
-  return "/chat";
+  return "";
 }
 function detectSubcommand(rawText) {
   const tokens = rawText.trim().split(/\s+/);
@@ -214,57 +27,18 @@ function detectQuickKeyword(rawText) {
   const lower = rawText.toLowerCase();
   return keywords.some((k) => lower.includes(k));
 }
-function buildSignal(rawText, overrides = {}, previousIntent = null) {
-  let command = detectIntent(rawText);
-  const sticky = detectStickyCodeIntent(rawText, command, previousIntent);
-  if (sticky) {
-    command = sticky;
-  }
-  const signal = {
-    command,
+function buildSignal(rawText, overrides = {}, previousBehavior = null) {
+  return {
+    command: detectIntent(rawText),
     rawText,
     hasQuickKeyword: detectQuickKeyword(rawText),
     subcommand: detectSubcommand(rawText),
+    previousBehavior,
     ...overrides
-  };
-  if (command === "/chat") {
-    signal.textCategory = classifyText(rawText).category;
-  }
-  return signal;
-}
-function escalateThinking(level) {
-  const index = THINKING_LEVELS.indexOf(level);
-  const nextIndex = Math.min(index + 1, THINKING_LEVELS.length - 1);
-  return THINKING_LEVELS[nextIndex];
-}
-function route(signal, policyFile) {
-  const policy = policyFile.routes.find((p) => p.intent === signal.command) ?? policyFile.routes.find((p) => p.intent === "/chat");
-  if (!policy) {
-    throw new Error(
-      `No policy defined for "${signal.command}" or fallback "/chat". Check policy configuration.`
-    );
-  }
-  const rule = findMatchingRule(signal, policy.rules);
-  const threshold = policyFile.settings.diffLinesEscalationThreshold;
-  const shouldEscalate = signal.diffLines !== void 0 && signal.diffLines >= threshold && policyFile.settings.diffLinesEscalationIntents.includes(signal.command);
-  const finalThinking = shouldEscalate ? escalateThinking(rule.thinking) : rule.thinking;
-  return {
-    intent: signal.command,
-    provider: rule.provider,
-    modelPool: rule.pool,
-    thinking: finalThinking,
-    contextBudget: rule.contextBudget,
-    constraints: rule.constraints,
-    allowedTools: rule.allowedTools ?? [...ALL_TOOLS],
-    output: rule.output ?? { maxTokens: 1e3 },
-    meta: {
-      ruleId: `${signal.command}${signal.subcommand ? "+" + signal.subcommand : ""}::${JSON.stringify(rule.when ?? "default")}`,
-      diffLinesEscalationApplied: shouldEscalate
-    }
   };
 }
 
-// ../../src/config/policy.loader.ts
+// ../../src/policy/loader.ts
 import { readFileSync } from "node:fs";
 
 // ../../node_modules/zod/v4/classic/external.js
@@ -14781,7 +14555,12 @@ function date4(params) {
 // ../../node_modules/zod/v4/classic/external.js
 config(en_default());
 
-// ../../src/config/policy.loader.ts
+// ../../src/workflow/types.ts
+var THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+var ALL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+
+// ../../src/policy/loader.ts
+var BehaviorSchema = external_exports.enum(["CHAT", "PLAN", "REVIEW", "CODE"]);
 var ThinkingLevelSchema = external_exports.enum(["off", "minimal", "low", "medium", "high", "xhigh"]);
 var ConstraintSchema = external_exports.enum([
   "code_only",
@@ -14790,7 +14569,7 @@ var ConstraintSchema = external_exports.enum([
   "no_code_output",
   "scope_limited"
 ]);
-var ToolNameSchema = external_exports.enum(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+var ToolNameSchema = external_exports.enum(ALL_TOOLS);
 var ContextBudgetSchema = external_exports.object({
   maxFiles: external_exports.number(),
   maxChars: external_exports.number()
@@ -14798,27 +14577,24 @@ var ContextBudgetSchema = external_exports.object({
 var OutputConstraintSchema = external_exports.object({
   maxTokens: external_exports.number()
 });
-var RouteRuleSchema = external_exports.object({
-  when: external_exports.record(external_exports.string(), external_exports.string()).optional(),
+var PolicyEntrySchema = external_exports.object({
+  behavior: BehaviorSchema,
+  workflow: external_exports.string().min(1),
   provider: external_exports.string(),
-  pool: external_exports.array(external_exports.string()).min(1, "Must contain at least one model"),
-  allowedTools: external_exports.array(ToolNameSchema).min(1).optional(),
+  pool: external_exports.array(external_exports.string()).min(1),
   thinking: ThinkingLevelSchema,
   contextBudget: ContextBudgetSchema,
   constraints: external_exports.array(ConstraintSchema),
-  output: OutputConstraintSchema.optional()
-});
-var RoutePolicySchema = external_exports.object({
-  intent: external_exports.string(),
-  rules: external_exports.array(RouteRuleSchema).min(1, "Rules array cannot be empty")
+  output: OutputConstraintSchema.optional(),
+  allowedTools: external_exports.array(ToolNameSchema).min(1).optional()
 });
 var PolicySettingsSchema = external_exports.object({
   diffLinesEscalationThreshold: external_exports.number().positive(),
-  diffLinesEscalationIntents: external_exports.array(external_exports.string()).min(1)
+  diffLinesEscalationBehaviors: external_exports.array(BehaviorSchema).min(1)
 });
 var PolicyFileSchema = external_exports.object({
   settings: PolicySettingsSchema,
-  routes: external_exports.array(RoutePolicySchema).min(1)
+  policies: external_exports.array(PolicyEntrySchema).min(1)
 });
 function loadPolicies(filePath) {
   const raw = readFileSync(filePath, "utf-8");
@@ -14832,123 +14608,1973 @@ ${issues}`);
   return result.data;
 }
 
-// ../../src/context/assembler.ts
-function selectFiles(candidates, budget) {
-  const sorted = [...candidates].sort((a, b) => {
-    if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
-    return b.lastModifiedAt - a.lastModifiedAt;
-  });
-  const selected = [];
-  let usedChars = 0;
-  for (const file2 of sorted) {
-    if (selected.length >= budget.maxFiles) break;
-    if (usedChars + file2.size > budget.maxChars) continue;
-    selected.push(file2);
-    usedChars += file2.size;
+// ../../src/telemetry/debugLogger.ts
+import fs from "node:fs";
+var LOG_FILE = "/Users/ayhanblt/Desktop/projects/ay-pi/ay-pi.debug.log";
+var DebugLogger = class _DebugLogger {
+  static instance = new _DebugLogger();
+  enabled = true;
+  startTime = 0;
+  logs = [];
+  // Data bags
+  input = "";
+  ruleEngine = {
+    keywords: [],
+    regex: [],
+    confidence: 0,
+    decision: "UNRESOLVED"
+  };
+  semanticEngine = {
+    invoked: false,
+    modelLoadedBefore: false,
+    loadingModel: false,
+    embeddingTimeMs: 0,
+    scores: {},
+    threshold: 0,
+    decision: "UNRESOLVED"
+  };
+  workflowResolver = {
+    behavior: "",
+    scores: {},
+    selected: ""
+  };
+  policy = {
+    selected: "",
+    reasoning: "",
+    model: "",
+    tools: []
+  };
+  adapter = {
+    target: "",
+    name: "",
+    systemPrompt: ""
+  };
+  finalResult = {
+    behavior: "",
+    workflow: "",
+    policy: ""
+  };
+  fallback = "";
+  contextStrategy = {
+    focusTargets: [],
+    repositoryScan: "",
+    expectedGoal: "",
+    reason: ""
+  };
+  static getInstance() {
+    return _DebugLogger.instance;
   }
+  start(input) {
+    if (!this.enabled) return;
+    this.startTime = performance.now();
+    this.input = input;
+    this.ruleEngine = { keywords: [], regex: [], confidence: 0, decision: "UNRESOLVED" };
+    this.semanticEngine = { invoked: false, modelLoadedBefore: false, loadingModel: false, embeddingTimeMs: 0, scores: {}, threshold: 0, decision: "UNRESOLVED" };
+    this.workflowResolver = { behavior: "", scores: {}, selected: "" };
+    this.policy = { selected: "", reasoning: "", model: "", tools: [] };
+    this.adapter = { target: "", name: "", systemPrompt: "" };
+    this.finalResult = { behavior: "", workflow: "", policy: "" };
+    this.fallback = "";
+    this.contextStrategy = { focusTargets: [], repositoryScan: "", expectedGoal: "", reason: "" };
+  }
+  print() {
+    if (!this.enabled) return;
+    const totalTime = Math.round(performance.now() - this.startTime);
+    let output = `
+--------------------------------------------------
+AY-PI Routing Debug
+--------------------------------------------------
+
+`;
+    output += `Input:
+"${this.input}"
+
+`;
+    output += `----------------------------------------
+
+Rule Engine
+
+`;
+    output += `Keywords:
+[${this.ruleEngine.keywords.join(", ")}]
+
+`;
+    output += `Regex:
+[${this.ruleEngine.regex.join(", ")}]
+
+`;
+    output += `Confidence:
+${this.ruleEngine.confidence.toFixed(2)}
+
+`;
+    output += `Decision:
+${this.ruleEngine.decision}
+
+`;
+    if (this.semanticEngine.invoked) {
+      output += `----------------------------------------
+
+Semantic Engine
+
+`;
+      output += `Model:
+Xenova/multilingual-e5-small
+
+`;
+      output += `Loaded:
+${this.semanticEngine.modelLoadedBefore}
+
+`;
+      output += `Load Source:
+${this.semanticEngine.modelLoadedBefore ? "memory" : "disk"}
+
+`;
+      output += `Loading Model:
+${this.semanticEngine.loadingModel ? "YES" : "NO"}
+
+`;
+      output += `Embedding Time:
+${this.semanticEngine.embeddingTimeMs}ms
+
+`;
+      output += `Similarity Scores:
+
+`;
+      for (const [bh, data] of Object.entries(this.semanticEngine.scores)) {
+        output += `Behavior: ${bh}
+Description: ${data.description}
+Score: ${data.score.toFixed(2)}
+
+`;
+      }
+      output += `Threshold:
+${this.semanticEngine.threshold}
+
+`;
+      output += `Decision:
+${this.semanticEngine.decision}
+
+`;
+    }
+    if (this.fallback) {
+      output += `Fallback:
+
+${this.fallback}
+
+`;
+    }
+    output += `----------------------------------------
+
+Workflow Resolver
+
+`;
+    output += `Behavior:
+${this.workflowResolver.behavior}
+
+`;
+    if (Object.keys(this.workflowResolver.scores).length > 0) {
+      output += `Workflow Scores:
+
+`;
+      for (const [wf, score] of Object.entries(this.workflowResolver.scores)) {
+        output += `${wf.padEnd(10)}: ${score.toFixed(2)}
+`;
+      }
+      output += `
+`;
+    }
+    output += `Selected Workflow:
+
+${this.workflowResolver.selected}
+
+`;
+    output += `----------------------------------------
+
+Policy
+
+`;
+    output += `Selected Policy:
+
+${this.policy.selected}
+
+`;
+    output += `Reasoning:
+${this.policy.reasoning}
+
+`;
+    output += `Model:
+
+${this.policy.model}
+
+`;
+    output += `Tools:
+
+${this.policy.tools.join("\n")}
+
+`;
+    output += `----------------------------------------
+
+Adapter
+
+`;
+    output += `Target:
+
+${this.adapter.target}
+
+`;
+    output += `Adapter:
+
+${this.adapter.name}
+
+`;
+    output += `--------------------------------------------------
+Context Strategy
+--------------------------------------------------
+
+`;
+    output += `Behavior:
+
+${this.finalResult.behavior}
+
+`;
+    output += `Workflow:
+
+${this.finalResult.workflow}
+
+`;
+    output += `Reasoning:
+
+${this.policy.reasoning}
+
+`;
+    const firstModel = this.policy.model.split(",")[0].trim();
+    output += `Selected Model:
+
+${firstModel}
+
+`;
+    output += `Target:
+
+${this.adapter.target}
+
+`;
+    output += `--------------------------------------------------
+Context Instructions
+
+`;
+    output += `Required Files:
+
+- N/A
+
+`;
+    output += `Optional Files:
+
+- N/A
+
+`;
+    output += `Avoid Reading:
+
+- N/A
+
+`;
+    output += `Focus Targets:
+
+${this.contextStrategy.focusTargets.length > 0 ? this.contextStrategy.focusTargets.join(", ") : "None"}
+
+`;
+    output += `Repository Scan:
+
+${this.contextStrategy.repositoryScan}
+
+`;
+    output += `Expected Goal:
+
+${this.contextStrategy.expectedGoal}
+
+`;
+    output += `Reason:
+
+${this.contextStrategy.reason}
+
+`;
+    output += `--------------------------------------------------
+Prompt Preview
+
+`;
+    output += `${this.adapter.systemPrompt}
+
+`;
+    output += `--------------------------------------------------
+Estimated Prompt Size
+
+`;
+    const chars = this.adapter.systemPrompt.length;
+    const tokens = Math.ceil(chars / 4);
+    output += `Characters:
+
+${chars}
+
+`;
+    output += `Estimated Tokens:
+
+${tokens}
+
+`;
+    output += `----------------------------------------
+
+FINAL RESULT
+
+`;
+    output += `Behavior:
+${this.finalResult.behavior}
+
+`;
+    output += `Workflow:
+${this.finalResult.workflow}
+
+`;
+    output += `Policy:
+${this.finalResult.policy}
+
+`;
+    output += `----------------------------------------
+
+Total Routing Time:
+
+${totalTime}ms
+
+==================================================
+`;
+    try {
+      fs.appendFileSync(LOG_FILE, output);
+    } catch (err) {
+      console.error("Failed to write debug log to", LOG_FILE, err);
+    }
+  }
+};
+
+// ../../src/behavior/ruleEngine.ts
+var BEHAVIOR_COMMANDS = {
+  "/chat": "CHAT",
+  "/plan": "PLAN",
+  "/review": "REVIEW",
+  "/code": "CODE"
+};
+var PLAN_KEYWORDS = [
+  "architecture",
+  "architectural",
+  "design",
+  "brainstorm",
+  "migration",
+  "migrate",
+  "strategy",
+  "roadmap",
+  "plan"
+];
+var REVIEW_KEYWORDS = [
+  "review",
+  "audit",
+  "security",
+  "performance",
+  "quality",
+  "code review"
+];
+var CODE_KEYWORDS = [
+  "fix",
+  "bug",
+  "refactor",
+  "generate",
+  "implement",
+  "edit",
+  "test",
+  "change this code",
+  "code"
+];
+var CHAT_KEYWORDS = [
+  "hello",
+  "hi",
+  "thanks",
+  "thank you",
+  "how are you",
+  "explain",
+  "summarize",
+  "teach",
+  "translate"
+];
+var STICKY_CODE_KEYWORDS = [
+  "uygula",
+  "apply",
+  "devam et",
+  "kodla",
+  "code it",
+  "go ahead",
+  "implement"
+];
+function containsKeyword(text, keyword) {
+  if (keyword.includes(" ")) {
+    return text.includes(keyword);
+  }
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(text);
+}
+function scoreKeywords(rawText, keywords) {
+  let score = 0;
+  for (const keyword of keywords) {
+    if (containsKeyword(rawText, keyword)) {
+      score += keyword.includes(" ") ? 0.16 : 0.1;
+    }
+  }
+  return Math.min(score, 0.49);
+}
+function bestKeywordBehavior(signal) {
+  const lower = signal.rawText.toLowerCase();
+  const candidates = [
+    {
+      behavior: "PLAN",
+      score: scoreKeywords(lower, PLAN_KEYWORDS),
+      ruleId: "behavior::keywords.plan"
+    },
+    {
+      behavior: "REVIEW",
+      score: scoreKeywords(lower, REVIEW_KEYWORDS),
+      ruleId: "behavior::keywords.review"
+    },
+    {
+      behavior: "CODE",
+      score: scoreKeywords(lower, CODE_KEYWORDS),
+      ruleId: "behavior::keywords.code"
+    },
+    {
+      behavior: "CHAT",
+      score: scoreKeywords(lower, CHAT_KEYWORDS),
+      ruleId: "behavior::keywords.chat"
+    }
+  ];
+  if (signal.hasQuickKeyword) {
+    candidates.push({
+      behavior: "CODE",
+      score: 0.36,
+      ruleId: "behavior::quickKeyword"
+    });
+  }
+  if (signal.previousBehavior === "PLAN" && STICKY_CODE_KEYWORDS.some((keyword) => containsKeyword(lower, keyword))) {
+    candidates.push({
+      behavior: "CODE",
+      score: 0.95,
+      ruleId: "behavior::sticky.plan-to-code"
+    });
+  }
+  const logger = DebugLogger.getInstance();
+  logger.ruleEngine.keywords = candidates.filter((c) => c.score > 0).map((c) => c.behavior);
+  let winner = candidates[0];
+  for (const candidate of candidates.slice(1)) {
+    if (candidate.score > winner.score) {
+      winner = candidate;
+    }
+  }
+  if (winner.score <= 0) {
+    logger.ruleEngine.confidence = 0;
+    logger.ruleEngine.decision = "UNRESOLVED";
+    return null;
+  }
+  logger.ruleEngine.confidence = winner.score;
+  logger.ruleEngine.decision = winner.behavior;
+  return winner;
+}
+function resolveBehaviorByRule(signal) {
+  const logger = DebugLogger.getInstance();
+  const explicit = BEHAVIOR_COMMANDS[signal.command];
+  if (explicit) {
+    logger.ruleEngine.confidence = 1;
+    logger.ruleEngine.decision = explicit;
+    return {
+      behavior: explicit,
+      confidence: 1,
+      source: "rule",
+      ruleId: `behavior::command.${signal.command.slice(1)}`
+    };
+  }
+  const keywordMatch = bestKeywordBehavior(signal);
+  if (keywordMatch) {
+    return {
+      ...keywordMatch,
+      confidence: keywordMatch.score,
+      source: "rule"
+    };
+  }
+  return null;
+}
+
+// ../../src/behavior/semanticEngine.ts
+import { pipeline } from "@xenova/transformers";
+
+// ../../src/behavior/catalog.json
+var catalog_default = [
+  {
+    id: "PLAN",
+    description: "plan, brainstorm, strategize, system design, software architecture, technical migration, roadmap, conceptualize. high-level discussion without writing code.",
+    embedding: [
+      0.0054779332131147385,
+      -0.017149019986391068,
+      -0.02275434322655201,
+      -0.02076762542128563,
+      0.05978669971227646,
+      -0.060871515423059464,
+      0.026452746242284775,
+      0.007448725868016481,
+      0.028997229412198067,
+      -0.001073283376172185,
+      0.04905828833580017,
+      -0.022114789113402367,
+      0.08291158825159073,
+      -0.004962368402630091,
+      -0.014453262090682983,
+      0.07734806090593338,
+      0.07093559205532074,
+      -0.0267524104565382,
+      -0.0610177256166935,
+      -0.013574428856372833,
+      0.02502749115228653,
+      -0.02402525208890438,
+      -0.040358807891607285,
+      0.052215754985809326,
+      0.057496264576911926,
+      0.04718245565891266,
+      -0.023599864915013313,
+      0.01749892346560955,
+      0.011894159950315952,
+      -0.03952218219637871,
+      -0.034726113080978394,
+      -0.03939832001924515,
+      0.06225968897342682,
+      -0.08038675040006638,
+      0.02031838707625866,
+      0.026751648634672165,
+      -0.0527530163526535,
+      0.00401914631947875,
+      0.026703378185629845,
+      -0.08410803228616714,
+      -0.011383014731109142,
+      0.00606043916195631,
+      0.0643649622797966,
+      0.03619425371289253,
+      0.03587096929550171,
+      0.10210686922073364,
+      -0.03345763310790062,
+      0.030187368392944336,
+      -0.05526401102542877,
+      -0.012952424585819244,
+      -0.045721691101789474,
+      0.06603528559207916,
+      0.05938270688056946,
+      0.06876882910728455,
+      0.014295335859060287,
+      -0.07700618356466293,
+      -0.06497812271118164,
+      -0.033331356942653656,
+      -0.030102211982011795,
+      0.013958759605884552,
+      0.027802035212516785,
+      -0.05739866942167282,
+      0.010819705203175545,
+      0.012360912747681141,
+      0.06732551753520966,
+      0.06232534721493721,
+      0.05823950469493866,
+      0.03298499435186386,
+      -0.06276571750640869,
+      -0.02852216176688671,
+      -0.04384812340140343,
+      0.08013708144426346,
+      -0.018097219988703728,
+      -0.05435467138886452,
+      0.02976229600608349,
+      0.015421420335769653,
+      0.0042908526957035065,
+      -0.05061783269047737,
+      0.022139573469758034,
+      -0.039059676229953766,
+      -0.10328246653079987,
+      -0.04078320786356926,
+      -0.04379008710384369,
+      0.02515522576868534,
+      -0.059031352400779724,
+      0.05614026263356209,
+      0.0535275898873806,
+      -0.05057822912931442,
+      0.05259830877184868,
+      -0.05956697836518288,
+      0.05133030191063881,
+      0.012376297265291214,
+      -0.08646101504564285,
+      -0.04704296588897705,
+      -0.0933934673666954,
+      -0.08772903680801392,
+      -0.07428571581840515,
+      0.07662612199783325,
+      0.06761857867240906,
+      -0.021267464384436607,
+      0.033804990351200104,
+      0.005137257277965546,
+      0.05344217270612717,
+      -0.0830894261598587,
+      -0.0497058629989624,
+      0.026044528931379318,
+      15446997713297606e-20,
+      -0.04927567020058632,
+      0.01804119348526001,
+      -0.05566444993019104,
+      -0.033591378480196,
+      0.04306158050894737,
+      0.08813165873289108,
+      0.021330876275897026,
+      0.0019976275507360697,
+      -0.06224427372217178,
+      -0.04002995043992996,
+      -0.05972758308053017,
+      0.03878536820411682,
+      -0.060228247195482254,
+      0.04825671762228012,
+      -0.018773069605231285,
+      -0.040428951382637024,
+      -0.05840090662240982,
+      -0.07435844838619232,
+      -0.05217210575938225,
+      0.0569775365293026,
+      0.07605571299791336,
+      -0.037841763347387314,
+      0.021382879465818405,
+      -0.0019460812909528613,
+      0.022851336747407913,
+      0.03522045165300369,
+      0.004040407948195934,
+      0.07119999825954437,
+      0.10886178910732269,
+      -0.012094504199922085,
+      0.04500756040215492,
+      -0.005236828234046698,
+      0.010316235013306141,
+      -0.0830332338809967,
+      0.10369016975164413,
+      -0.03713396564126015,
+      0.029922716319561005,
+      0.06767047196626663,
+      0.040781185030937195,
+      0.062138039618730545,
+      -0.04016151651740074,
+      0.056506261229515076,
+      -0.03638557344675064,
+      0.07004966586828232,
+      -0.029341112822294235,
+      0.05028337985277176,
+      0.027675343677401543,
+      0.0361475795507431,
+      -0.027265582233667374,
+      -0.047575727105140686,
+      -0.025470977649092674,
+      0.0802164375782013,
+      0.06877785176038742,
+      -0.037344351410865784,
+      -0.04821401461958885,
+      -0.0517767034471035,
+      -0.06257584691047668,
+      -0.07021359354257584,
+      -0.048844169825315475,
+      0.030786830931901932,
+      0.045786887407302856,
+      -0.03828771784901619,
+      -0.0017013080650940537,
+      -0.09312836080789566,
+      0.07598492503166199,
+      -0.047831639647483826,
+      0.02557998336851597,
+      0.01405472494661808,
+      0.022665085271000862,
+      -0.04520310461521149,
+      0.028734717518091202,
+      0.09247500449419022,
+      0.0594201497733593,
+      -0.029996182769536972,
+      -0.03307104483246803,
+      -0.008277593180537224,
+      -0.025562968105077744,
+      -0.09730479121208191,
+      -0.031019527465105057,
+      -0.054205939173698425,
+      0.03247913718223572,
+      0.029816759750247,
+      0.005151042714715004,
+      0.009522737003862858,
+      0.05170227587223053,
+      -0.09582310914993286,
+      -0.0764966756105423,
+      -0.0779767781496048,
+      0.030179502442479134,
+      -0.003972714301198721,
+      0.05638284981250763,
+      0.043484024703502655,
+      0.05028471723198891,
+      -0.04372354969382286,
+      -0.012933298014104366,
+      0.035635385662317276,
+      0.01587541401386261,
+      0.043745946139097214,
+      0.014615003019571304,
+      -0.029041193425655365,
+      0.06093753129243851,
+      -0.009859302081167698,
+      0.051034193485975266,
+      0.039038266986608505,
+      -0.08879833668470383,
+      -0.07046406716108322,
+      0.014211309142410755,
+      -0.005846712272614241,
+      -0.03770571947097778,
+      -0.02242574840784073,
+      0.06494013965129852,
+      -0.02595193311572075,
+      0.008887742646038532,
+      0.04193369671702385,
+      -0.04526754841208458,
+      0.03666934370994568,
+      -0.0894610732793808,
+      -0.08122243732213974,
+      0.023435479030013084,
+      0.04007216542959213,
+      -0.08231718093156815,
+      -0.016187062487006187,
+      0.04944828525185585,
+      -0.04492710530757904,
+      -0.03838086873292923,
+      -0.07033663988113403,
+      -0.07653585076332092,
+      -0.04894782230257988,
+      -0.06426279246807098,
+      0.004482116084545851,
+      0.043949853628873825,
+      0.02946699596941471,
+      -0.04528016969561577,
+      -0.05120374262332916,
+      -0.02007000893354416,
+      0.017192885279655457,
+      -0.08128567039966583,
+      0.09040119498968124,
+      -0.007101536728441715,
+      -0.04380146041512489,
+      0.059683043509721756,
+      -0.0036189875099807978,
+      0.02725095860660076,
+      0.05347706004977226,
+      -0.06584703922271729,
+      -0.052826784551143646,
+      -0.012389234267175198,
+      -0.03421907126903534,
+      0.06462488323450089,
+      0.07729781419038773,
+      0.09122246503829956,
+      -0.03470470383763313,
+      0.029787393286824226,
+      -0.007506840862333775,
+      -0.06778331845998764,
+      0.10492865741252899,
+      0.03780240938067436,
+      0.032946325838565826,
+      -0.020718548446893692,
+      -0.0280914306640625,
+      -0.031845949590206146,
+      -0.05227981135249138,
+      -0.030572863295674324,
+      -0.07540902495384216,
+      0.017425986006855965,
+      0.033080536872148514,
+      -0.0466841384768486,
+      -0.049470625817775726,
+      -0.07770916074514389,
+      0.029904203489422798,
+      0.09939911216497421,
+      -0.043059878051280975,
+      -0.06733626872301102,
+      0.028100362047553062,
+      0.025735558941960335,
+      0.044520795345306396,
+      0.057039108127355576,
+      0.03499690815806389,
+      0.009020579978823662,
+      -0.014574626460671425,
+      0.062121085822582245,
+      0.012588761746883392,
+      -0.06294006109237671,
+      -0.026243142783641815,
+      -0.10290645807981491,
+      0.04395396634936333,
+      -0.012828023172914982,
+      0.09434188157320023,
+      0.030310198664665222,
+      0.0022624896373599768,
+      0.0684100091457367,
+      -0.04470875486731529,
+      0.10382211953401566,
+      -0.01810395158827305,
+      -0.04721817746758461,
+      0.028667166829109192,
+      0.05443470925092697,
+      -0.1127985343337059,
+      0.04421525448560715,
+      0.013361937366425991,
+      0.017686009407043457,
+      0.018724871799349785,
+      0.02020183391869068,
+      0.029512453824281693,
+      0.04946213960647583,
+      -0.04400341585278511,
+      -0.04233713075518608,
+      0.07345622032880783,
+      0.04440431296825409,
+      -0.005320517346262932,
+      0.07029471546411514,
+      -0.06823474168777466,
+      -0.05112965404987335,
+      -0.042442165315151215,
+      -0.08144785463809967,
+      -0.04113207384943962,
+      -0.0487496517598629,
+      0.0598185770213604,
+      0.06301000714302063,
+      -0.0806988775730133,
+      0.021558543667197227,
+      -0.004492268897593021,
+      -0.0050832959823310375,
+      0.05766063556075096,
+      -0.04555097594857216,
+      -0.049669552594423294,
+      0.02606099285185337,
+      -0.07237882167100906,
+      0.011646213009953499,
+      -0.01171872764825821,
+      0.06823710352182388,
+      -0.08887223899364471,
+      -0.07011185586452484,
+      0.01017481554299593,
+      0.04003053158521652,
+      -0.02384137362241745,
+      0.0858704000711441,
+      -0.03384513780474663,
+      -0.06728098541498184,
+      0.022632520645856857,
+      -0.05969678610563278,
+      0.0028872175607830286,
+      0.0261223167181015,
+      0.09211143106222153,
+      -0.08857545256614685,
+      0.024511856958270073,
+      0.07046262919902802,
+      -0.01284571923315525,
+      0.046618781983852386,
+      -0.06090895086526871,
+      0.029021209105849266,
+      0.04694674536585808,
+      0.08300583064556122,
+      -0.05161469802260399,
+      -0.041907500475645065,
+      0.04914530739188194,
+      0.05926690995693207,
+      0.03702946752309799,
+      0.0336003452539444,
+      -8099150727503002e-19,
+      0.03826981037855148,
+      0.03285887464880943,
+      -0.029280221089720726,
+      0.09862694889307022,
+      0.08046180009841919,
+      -0.07638806849718094,
+      0.0016264013247564435,
+      -0.04648376256227493,
+      -0.03861146420240402,
+      -0.029834764078259468,
+      0.04501226171851158,
+      -0.09428222477436066,
+      -0.053610384464263916,
+      -0.004660316277295351,
+      0.09255954623222351,
+      0.03978211432695389,
+      0.042518652975559235
+    ]
+  },
+  {
+    id: "REVIEW",
+    description: "evaluate, audit, assess, code review, performance check, security audit, find bugs. analyze existing work without creating features.",
+    embedding: [
+      0.049451395869255066,
+      -0.016734594479203224,
+      -0.03493497893214226,
+      -0.0748855322599411,
+      0.04536686837673187,
+      -0.027949003502726555,
+      -0.0030589436646550894,
+      -4773274704348296e-19,
+      0.04968076944351196,
+      -0.0019385829800739884,
+      -0.001235014759004116,
+      0.03267638012766838,
+      0.08620288968086243,
+      -0.02778480388224125,
+      -0.02016158029437065,
+      0.08185824751853943,
+      0.06098411977291107,
+      -0.05864037573337555,
+      -0.05593624711036682,
+      -0.04673170670866966,
+      0.037750985473394394,
+      -0.045278795063495636,
+      -0.03420348837971687,
+      0.032906997948884964,
+      0.0896213948726654,
+      0.04902702197432518,
+      -0.009674477390944958,
+      -0.038109879940748215,
+      0.038349445909261703,
+      -0.06164294853806496,
+      -0.058202408254146576,
+      -0.017878377810120583,
+      0.03145112842321396,
+      -0.08744200319051743,
+      0.00969903264194727,
+      0.004493537358939648,
+      -0.056990887969732285,
+      -0.015830907970666885,
+      0.025807490572333336,
+      -0.07573606818914413,
+      -0.02719019539654255,
+      0.0030237343162298203,
+      0.04522370174527168,
+      0.04265648499131203,
+      0.0157975684851408,
+      0.0569591149687767,
+      -0.047509703785181046,
+      0.028660627081990242,
+      -0.0676017627120018,
+      -0.030290590599179268,
+      -0.015729796141386032,
+      0.05271809548139572,
+      0.011164442636072636,
+      0.053225964307785034,
+      0.03854504972696304,
+      -0.018648803234100342,
+      -0.044449806213378906,
+      -0.041365813463926315,
+      -0.04640791937708855,
+      0.03167835995554924,
+      0.06667349487543106,
+      -0.07532323896884918,
+      0.017395123839378357,
+      0.007869385182857513,
+      0.09921084344387054,
+      0.03404408320784569,
+      0.07669701427221298,
+      0.04846572503447533,
+      -0.07815700024366379,
+      -0.04544125869870186,
+      -0.05257847532629967,
+      0.0376853421330452,
+      0.0025810031220316887,
+      -0.043402332812547684,
+      -0.002583511406555772,
+      0.026392491534352303,
+      0.005861599929630756,
+      -0.061360567808151245,
+      0.006407833658158779,
+      -0.05325150489807129,
+      -0.10931691527366638,
+      -0.011459743604063988,
+      -0.04316018894314766,
+      0.021273601800203323,
+      -0.019671665504574776,
+      0.07113812118768692,
+      0.05056768283247948,
+      -0.07019757479429245,
+      0.09484600275754929,
+      -0.04059004411101341,
+      0.056724708527326584,
+      0.018298767507076263,
+      -0.08479572087526321,
+      -0.04649394378066063,
+      -0.14047762751579285,
+      -0.0789412260055542,
+      -0.05671205744147301,
+      0.0959208533167839,
+      0.08109265565872192,
+      -0.024853680282831192,
+      0.04699274152517319,
+      -0.009154669009149075,
+      0.06618582457304001,
+      -0.07079654932022095,
+      -0.018181797116994858,
+      0.06651859730482101,
+      -0.020921368151903152,
+      -0.06706222891807556,
+      0.04142986238002777,
+      -0.051229577511548996,
+      -0.0414414219558239,
+      0.035969022661447525,
+      0.09773428738117218,
+      0.012883076444268227,
+      655647658277303e-18,
+      -0.03671562671661377,
+      -0.034346334636211395,
+      -0.07161547243595123,
+      0.029791230335831642,
+      -0.061623331159353256,
+      0.05454228073358536,
+      -0.05298476293683052,
+      -0.039892151951789856,
+      -0.08710459619760513,
+      -0.052122049033641815,
+      -0.05607731267809868,
+      0.05497702956199646,
+      0.06827536225318909,
+      -0.022977789863944054,
+      0.008857695385813713,
+      -0.012438327074050903,
+      0.044637586921453476,
+      0.030529741197824478,
+      0.020142346620559692,
+      0.04328851401805878,
+      0.10889670997858047,
+      -0.020936649292707443,
+      0.019309738650918007,
+      -0.0010297630215063691,
+      -0.0047221919521689415,
+      -0.060346927493810654,
+      0.0838175043463707,
+      0.012727887369692326,
+      0.04693644493818283,
+      0.06278105825185776,
+      0.03660055994987488,
+      0.06063629314303398,
+      -0.04075860232114792,
+      0.06913517415523529,
+      -0.05283312499523163,
+      0.05707262456417084,
+      14935033686924726e-20,
+      0.09359204024076462,
+      0.01673809066414833,
+      0.06273109465837479,
+      -0.038795795291662216,
+      -0.04890771955251694,
+      -0.03236868232488632,
+      0.07223406434059143,
+      0.05713777616620064,
+      -0.05620316043496132,
+      -0.040538012981414795,
+      -0.0563654750585556,
+      -0.0499279759824276,
+      -0.06677599996328354,
+      -0.03696846589446068,
+      0.013592277653515339,
+      0.06799168139696121,
+      -0.045131731778383255,
+      -0.029329048469662666,
+      -0.06217491254210472,
+      0.07362847030162811,
+      -0.01717068813741207,
+      0.047731850296258926,
+      0.005858680699020624,
+      0.06999540328979492,
+      -0.03712896630167961,
+      0.012395409867167473,
+      0.070283442735672,
+      0.05212338641285896,
+      -0.03315015509724617,
+      -0.03593790903687477,
+      -0.004451585467904806,
+      -0.02634497359395027,
+      -0.07456524670124054,
+      -0.04544467478990555,
+      -0.05683418735861778,
+      0.037363577634096146,
+      -0.015192924067378044,
+      0.012994164600968361,
+      0.017150679603219032,
+      0.04012780636548996,
+      -0.07933752238750458,
+      -0.06342889368534088,
+      -0.08013623207807541,
+      0.026501348242163658,
+      -0.03683473542332649,
+      0.04261782392859459,
+      0.03272351250052452,
+      0.04887518286705017,
+      -0.03587747737765312,
+      -0.009175852872431278,
+      0.08573877811431885,
+      0.009222007356584072,
+      0.027109846472740173,
+      -0.017293643206357956,
+      -0.03477280214428902,
+      0.08071424812078476,
+      -0.06438169628381729,
+      0.022338952869176865,
+      0.03229781612753868,
+      -0.06197940558195114,
+      -0.06101555749773979,
+      0.05369957908987999,
+      0.0053171152248978615,
+      -0.03396551311016083,
+      -0.010021084919571877,
+      0.0779237225651741,
+      0.006166182924062014,
+      0.01743270829319954,
+      0.030115943402051926,
+      -0.02128704823553562,
+      0.01236292440444231,
+      -0.07447152584791183,
+      -0.07239286601543427,
+      0.015056072734296322,
+      0.04064679518342018,
+      -0.0981178805232048,
+      -0.04691848158836365,
+      0.06602475792169571,
+      -0.03906757012009621,
+      -0.07525356858968735,
+      -0.031057702377438545,
+      -0.07300112396478653,
+      -0.03951939940452576,
+      -0.07343807071447372,
+      -0.008861992508172989,
+      0.04261766001582146,
+      0.04338132217526436,
+      -0.026423446834087372,
+      -0.042751528322696686,
+      -0.06257966160774231,
+      0.047928258776664734,
+      -0.07399606704711914,
+      0.08679167926311493,
+      -0.02374177798628807,
+      -0.03462367504835129,
+      0.05392008274793625,
+      -0.03475162386894226,
+      0.046923909336328506,
+      0.04275885224342346,
+      -0.05616944283246994,
+      -0.051320940256118774,
+      0.015078764408826828,
+      -0.03439817577600479,
+      0.08475945144891739,
+      0.07973732054233551,
+      0.10718116164207458,
+      -0.033727552741765976,
+      0.027306674048304558,
+      0.011777372099459171,
+      -0.05674361437559128,
+      0.061947863548994064,
+      0.041241616010665894,
+      0.03471781685948372,
+      0.005490992218255997,
+      -0.03176254406571388,
+      0.0013467759126797318,
+      -0.0744982436299324,
+      -0.023842282593250275,
+      -0.08251731842756271,
+      0.013361671008169651,
+      0.03347970172762871,
+      -0.03719377517700195,
+      -0.04865878075361252,
+      -0.05879949778318405,
+      0.03824509307742119,
+      0.08164962381124496,
+      -0.060680728405714035,
+      -0.05203026533126831,
+      0.0011982833966612816,
+      -0.004609548021107912,
+      0.08363255113363266,
+      0.017826315015554428,
+      0.07333223521709442,
+      0.0024924527388066053,
+      0.02648979239165783,
+      0.043094199150800705,
+      0.0036350490991026163,
+      -0.05143629387021065,
+      0.0016925260424613953,
+      -0.10162461549043655,
+      0.03620819374918938,
+      -0.020625801756978035,
+      0.06754060834646225,
+      0.060561180114746094,
+      0.018740613013505936,
+      0.08151307702064514,
+      -0.03464028611779213,
+      0.0835282951593399,
+      -0.01307365670800209,
+      -0.05393849313259125,
+      0.028350967913866043,
+      0.05223770812153816,
+      -0.08259518444538116,
+      0.06107231602072716,
+      0.0448107048869133,
+      -0.012393803335726261,
+      0.008342218585312366,
+      0.05842773988842964,
+      0.04829385504126549,
+      0.049006495624780655,
+      -0.013218054547905922,
+      -0.0466054230928421,
+      0.0447496697306633,
+      0.014238014817237854,
+      -0.02067362330853939,
+      0.04717808961868286,
+      -0.05009935796260834,
+      -0.04941340535879135,
+      -0.0507894791662693,
+      -0.08749520778656006,
+      -0.013143008574843407,
+      -0.05316102132201195,
+      0.03132208436727524,
+      0.0811719074845314,
+      -0.07649542391300201,
+      -0.005233076401054859,
+      0.041752614080905914,
+      -0.015131264925003052,
+      0.026101257652044296,
+      -0.03704700618982315,
+      -0.037956248968839645,
+      0.023847589269280434,
+      -0.07461376488208771,
+      0.00701930234208703,
+      -0.02829999476671219,
+      0.040579140186309814,
+      -0.03252808749675751,
+      -0.05415458604693413,
+      9781749686226249e-19,
+      0.031587351113557816,
+      -0.03356378152966499,
+      0.06537748128175735,
+      -0.049931202083826065,
+      -0.08383309096097946,
+      0.00878120493143797,
+      -0.01502479799091816,
+      0.01572158932685852,
+      0.05174927040934563,
+      0.060684967786073685,
+      -0.09068413078784943,
+      0.05746917054057121,
+      0.05675268545746803,
+      -0.04166198894381523,
+      0.04600628837943077,
+      -0.10033601522445679,
+      0.007071735803037882,
+      0.051424331963062286,
+      0.06195059418678284,
+      -0.06580457836389542,
+      -0.031552594155073166,
+      0.054259151220321655,
+      0.06092749908566475,
+      0.0727599486708641,
+      0.06514149159193039,
+      -0.02194884791970253,
+      0.004409474786370993,
+      0.034350696951150894,
+      -0.06280730664730072,
+      0.10928568243980408,
+      0.06528846174478531,
+      -0.039539504796266556,
+      -0.047367360442876816,
+      -0.02567259408533573,
+      -0.059107765555381775,
+      -0.006383473519235849,
+      0.04228021949529648,
+      -0.0773821771144867,
+      -0.04783390089869499,
+      -0.007579892873764038,
+      0.06075058504939079,
+      0.056402768939733505,
+      0.09030746668577194
+    ]
+  },
+  {
+    id: "CODE",
+    description: "modify project, implement features, write code, UI improvements, visual design, color layout changes, component modifications, bug fixes, refactoring.",
+    embedding: [
+      0.016062932088971138,
+      -0.04164060950279236,
+      -0.039855580776929855,
+      -0.046675905585289,
+      0.064724862575531,
+      -0.020916210487484932,
+      -0.015240934677422047,
+      0.02282041311264038,
+      0.028891298919916153,
+      -0.011053242720663548,
+      0.024333396926522255,
+      0.010856608860194683,
+      0.09454748779535294,
+      -0.04089658334851265,
+      -0.004026005510240793,
+      0.04214920476078987,
+      0.08032075315713882,
+      -0.021460888907313347,
+      -0.03126458078622818,
+      -0.04339904338121414,
+      0.0300711989402771,
+      -0.04429665952920914,
+      0.004263231065124273,
+      0.01455651130527258,
+      0.06612080335617065,
+      0.03704243525862694,
+      -0.03374437987804413,
+      -0.027620157226920128,
+      0.03758186474442482,
+      -0.07300066947937012,
+      -0.054712485522031784,
+      -0.0381358303129673,
+      0.038164906203746796,
+      -0.04999013617634773,
+      0.025714926421642303,
+      0.006876519415527582,
+      -0.04334848001599312,
+      -0.015701990574598312,
+      0.03974685072898865,
+      -0.0828820988535881,
+      -0.023911064490675926,
+      -0.0016373663675040007,
+      0.04485061392188072,
+      0.0585690438747406,
+      0.043805841356515884,
+      0.05858540162444115,
+      -0.053025729954242706,
+      0.007125381845980883,
+      -0.04469289258122444,
+      -0.034831661731004715,
+      -0.02292090281844139,
+      0.061378974467515945,
+      0.028343981131911278,
+      0.06047781929373741,
+      0.03289668634533882,
+      -0.043691881000995636,
+      -0.0499427355825901,
+      -0.04766342416405678,
+      -0.046051133424043655,
+      0.024375304579734802,
+      0.04269891604781151,
+      -0.07183068990707397,
+      0.016553107649087906,
+      0.02573489397764206,
+      0.10384131968021393,
+      0.01218436285853386,
+      0.06168660521507263,
+      0.024222882464528084,
+      -0.06618621200323105,
+      -0.020670028403401375,
+      -0.05853760614991188,
+      0.06193368136882782,
+      0.008673428557813168,
+      -0.029261726886034012,
+      0.011193030513823032,
+      0.014183691702783108,
+      0.009593900293111801,
+      -0.09113620221614838,
+      0.015431629493832588,
+      -0.05384217947721481,
+      -0.10990201681852341,
+      -0.013628686778247356,
+      -0.057363931089639664,
+      0.03863392397761345,
+      -0.04785566031932831,
+      0.07411397993564606,
+      0.044512078166007996,
+      -0.06537637859582901,
+      0.09603071957826614,
+      -0.04577288776636124,
+      0.03651745617389679,
+      0.0229943860322237,
+      -0.08181260526180267,
+      -0.05494021251797676,
+      -0.1508275270462036,
+      -0.06211415305733681,
+      -0.06243160739541054,
+      0.08096075057983398,
+      0.07820618897676468,
+      -0.020834121853113174,
+      0.04421684145927429,
+      0.014107643626630306,
+      0.07644633203744888,
+      -0.09082763642072678,
+      -0.05088590085506439,
+      0.03135104849934578,
+      0.014189964160323143,
+      -0.026340706273913383,
+      0.04000626876950264,
+      -0.040318384766578674,
+      -0.01986282505095005,
+      0.020892366766929626,
+      0.036104049533605576,
+      0.01856592483818531,
+      -42707184911705554e-20,
+      -0.0425293855369091,
+      -0.016742009669542313,
+      -0.07579595595598221,
+      0.05152048543095589,
+      -0.0755501240491867,
+      0.06684955954551697,
+      -0.025980090722441673,
+      -0.057252466678619385,
+      -0.07308635115623474,
+      -0.05503436177968979,
+      -0.05830258131027222,
+      0.06767795979976654,
+      0.047351986169815063,
+      -0.02866053208708763,
+      -0.009580985642969608,
+      0.0059883506037294865,
+      0.05159422755241394,
+      0.05873311311006546,
+      0.010606806725263596,
+      0.037279412150382996,
+      0.1098121628165245,
+      -0.02490241453051567,
+      -0.017263615503907204,
+      -0.03460517153143883,
+      0.009321601130068302,
+      -0.04907848313450813,
+      0.06735490262508392,
+      -0.02253846637904644,
+      0.0488838292658329,
+      0.058434948325157166,
+      0.04219864681363106,
+      0.05981191620230675,
+      -0.03205862641334534,
+      0.07493896037340164,
+      -0.0104847252368927,
+      0.05945068970322609,
+      0.03607543557882309,
+      0.075593501329422,
+      0.03000686876475811,
+      0.06885258853435516,
+      -0.0631294772028923,
+      -0.0368359237909317,
+      -0.036309342831373215,
+      0.08821583539247513,
+      0.04317299649119377,
+      -0.040445782244205475,
+      -0.005402882117778063,
+      -0.04680371657013893,
+      -0.057326920330524445,
+      -0.056126970797777176,
+      -0.06479481607675552,
+      -0.00504298647865653,
+      0.0649738535284996,
+      -0.02986328676342964,
+      0.0034786409232765436,
+      -0.08093080669641495,
+      0.08852102607488632,
+      -0.044703006744384766,
+      0.053052205592393875,
+      -0.011008914560079575,
+      0.040101680904626846,
+      -0.03992778807878494,
+      0.050231002271175385,
+      0.09727970510721207,
+      0.05869622901082039,
+      -0.0021907645277678967,
+      -0.012901412323117256,
+      -0.029561767354607582,
+      -0.04650121182203293,
+      -0.07946109771728516,
+      -0.03951107710599899,
+      -0.0781126543879509,
+      0.023576771840453148,
+      0.007537541911005974,
+      -0.012385163456201553,
+      -0.004728677216917276,
+      0.03930490463972092,
+      -0.08340699225664139,
+      -0.06862705945968628,
+      -0.06582580506801605,
+      0.03572070971131325,
+      -0.0680716335773468,
+      0.046589549630880356,
+      0.04570728912949562,
+      0.07892623543739319,
+      -0.011327721178531647,
+      -0.020884880796074867,
+      0.038307949900627136,
+      0.007834520190954208,
+      0.016113918274641037,
+      20809800480492413e-20,
+      -0.02503087744116783,
+      0.09038840234279633,
+      -0.049817588180303574,
+      0.040842968970537186,
+      0.041440170258283615,
+      -0.07870319485664368,
+      -0.09502067416906357,
+      0.046190060675144196,
+      -0.0025377050042152405,
+      -0.028587581589818,
+      -0.05208395794034004,
+      0.04699072986841202,
+      -0.024614684283733368,
+      0.05447700247168541,
+      0.03702874854207039,
+      -0.021316684782505035,
+      0.04247654974460602,
+      -0.07360000163316727,
+      -0.06983014196157455,
+      0.0502617321908474,
+      0.053209032863378525,
+      -0.08657077699899673,
+      -0.04931289330124855,
+      0.05967147275805473,
+      -0.053710535168647766,
+      -0.04161454737186432,
+      -0.046995360404253006,
+      -0.05057769641280174,
+      -0.04829316586256027,
+      -0.05071242153644562,
+      -0.015146637335419655,
+      0.04076831415295601,
+      0.044111669063568115,
+      -0.031015902757644653,
+      -0.013234223239123821,
+      -0.052274271845817566,
+      0.03853787109255791,
+      -0.1097126379609108,
+      0.08110733330249786,
+      -0.018871469423174858,
+      -0.04528673738241196,
+      0.049484774470329285,
+      -0.013024370186030865,
+      0.02456546016037464,
+      0.021004529669880867,
+      -0.07024919986724854,
+      -0.05659705772995949,
+      -0.015639934688806534,
+      -0.05505120009183884,
+      0.08565379679203033,
+      0.05269429087638855,
+      0.0743059515953064,
+      -0.046880144625902176,
+      0.030664732679724693,
+      -0.004162038676440716,
+      -0.044890787452459335,
+      0.09711957722902298,
+      0.04809238761663437,
+      0.02799682691693306,
+      -0.005807376466691494,
+      -0.05441088229417801,
+      -0.003150874050334096,
+      -0.06278423964977264,
+      -0.025777898728847504,
+      -0.07338930666446686,
+      0.018040616065263748,
+      0.020614253357052803,
+      -0.07004352658987045,
+      -0.027476700022816658,
+      -0.08262566477060318,
+      0.06204712390899658,
+      0.06501543521881104,
+      -0.04485314339399338,
+      -0.04981673136353493,
+      -0.002524804323911667,
+      0.0201126616448164,
+      0.054277002811431885,
+      0.06682278960943222,
+      0.055004462599754333,
+      -0.016552988439798355,
+      0.0670991763472557,
+      0.08872514218091965,
+      -0.003529464593157172,
+      -0.05802958086133003,
+      0.005668165162205696,
+      -0.0739569440484047,
+      0.034635961055755615,
+      -0.023252148181200027,
+      0.07417937368154526,
+      0.036500632762908936,
+      -0.00736706517636776,
+      0.06616334617137909,
+      -0.05194753408432007,
+      0.08649077266454697,
+      -0.02619577758014202,
+      -0.037215035408735275,
+      0.029958589002490044,
+      0.0464818961918354,
+      -0.07989833503961563,
+      0.08027467876672745,
+      0.01882963813841343,
+      0.013280012644827366,
+      0.017396628856658936,
+      0.01321410946547985,
+      0.05300000309944153,
+      0.048071183264255524,
+      -0.015400630421936512,
+      -0.05624517425894737,
+      0.049319133162498474,
+      0.04871540516614914,
+      -0.011483851820230484,
+      0.07025213539600372,
+      -0.05926193669438362,
+      -0.047207292169332504,
+      -0.05510902777314186,
+      -0.07850977778434753,
+      -0.04549865797162056,
+      -0.04654751345515251,
+      0.0539851151406765,
+      0.06707246601581573,
+      -0.11141565442085266,
+      -0.029662488028407097,
+      0.03444796800613403,
+      -0.00835367850959301,
+      0.05853244662284851,
+      -0.06276835501194,
+      -0.07101386785507202,
+      0.03762214630842209,
+      -0.04678615555167198,
+      0.025218578055500984,
+      0.002957472577691078,
+      0.04961494728922844,
+      -0.05426488816738129,
+      -0.03921938315033913,
+      0.0026815361343324184,
+      0.029881982132792473,
+      -0.020370859652757645,
+      0.05572713911533356,
+      -0.046311307698488235,
+      -0.08802011609077454,
+      0.023664304986596107,
+      -0.02234300598502159,
+      -0.004438693635165691,
+      0.06403262168169022,
+      0.07957400381565094,
+      -0.09016542136669159,
+      0.04560752958059311,
+      0.0635179951786995,
+      -0.0138900401070714,
+      0.030570242553949356,
+      -0.09336269646883011,
+      -0.003074382431805134,
+      0.039813462644815445,
+      0.04778702184557915,
+      -0.056485727429389954,
+      -0.015162563882768154,
+      0.04609912633895874,
+      0.09905305504798889,
+      0.06700538098812103,
+      0.041351985186338425,
+      -0.0012356622610241175,
+      0.01127996202558279,
+      0.025289621204137802,
+      -0.04992379620671272,
+      0.08952116221189499,
+      0.051406510174274445,
+      -0.03538835793733597,
+      -0.02726476453244686,
+      -0.05283194035291672,
+      -0.05167808383703232,
+      0.006846534553915262,
+      0.031061775982379913,
+      -0.07802749425172806,
+      -0.014727440662682056,
+      -0.006432938389480114,
+      0.08510179817676544,
+      0.060109809041023254,
+      0.06982085853815079
+    ]
+  }
+];
+
+// ../../src/behavior/semanticEngine.ts
+var SEMANTIC_CONFIDENCE_THRESHOLD = Number(process.env.SEMANTIC_CONFIDENCE_THRESHOLD) || 0.78;
+var extractorPipeline = null;
+async function getExtractor() {
+  const logger = DebugLogger.getInstance();
+  if (!extractorPipeline) {
+    logger.semanticEngine.loadingModel = true;
+    extractorPipeline = await pipeline("feature-extraction", "Xenova/multilingual-e5-small", {
+      quantized: true
+    });
+  } else {
+    logger.semanticEngine.modelLoadedBefore = true;
+  }
+  return extractorPipeline;
+}
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+async function resolveBehaviorBySemantics(signal) {
+  const logger = DebugLogger.getInstance();
+  logger.semanticEngine.invoked = true;
+  logger.semanticEngine.threshold = SEMANTIC_CONFIDENCE_THRESHOLD;
+  const extractor = await getExtractor();
+  const startT = performance.now();
+  const output = await extractor(`query: ${signal.rawText}`, {
+    pooling: "mean",
+    normalize: true
+  });
+  logger.semanticEngine.embeddingTimeMs = Math.round(performance.now() - startT);
+  const queryEmbedding = Array.from(output.data);
+  let bestBehavior = null;
+  let highestScore = -Infinity;
+  for (const behavior of catalog_default) {
+    const score = cosineSimilarity(queryEmbedding, behavior.embedding);
+    logger.semanticEngine.scores[behavior.id] = { score, description: behavior.description };
+    if (score > highestScore) {
+      highestScore = score;
+      bestBehavior = behavior.id;
+    }
+  }
+  logger.semanticEngine.decision = bestBehavior;
+  return {
+    behavior: bestBehavior,
+    confidence: highestScore,
+    source: "semantic",
+    ruleId: `behavior::semantic.${bestBehavior.toLowerCase()}`
+  };
+}
+
+// ../../src/behavior/resolver.ts
+var RULE_CONFIDENCE_THRESHOLD = 0.55;
+async function resolveBehavior(signal) {
+  const logger = DebugLogger.getInstance();
+  const ruleResolution = resolveBehaviorByRule(signal);
+  if (ruleResolution && ruleResolution.confidence >= RULE_CONFIDENCE_THRESHOLD) {
+    return ruleResolution;
+  }
+  const semanticResolution = await resolveBehaviorBySemantics(signal);
+  return semanticResolution;
+}
+
+// ../../src/workflow/catalog.ts
+var WORKFLOW_CATALOG = [
+  { id: "default", behavior: "CHAT", description: "Casual conversation and direct answers." },
+  { id: "explain", behavior: "CHAT", description: "Explain a concept or answer why/how questions." },
+  { id: "summarize", behavior: "CHAT", description: "Condense long material into a concise summary." },
+  { id: "teach", behavior: "CHAT", description: "Teach a concept step by step with examples." },
+  { id: "translate", behavior: "CHAT", description: "Translate text while preserving meaning and tone." },
+  { id: "architecture", behavior: "PLAN", description: "High-level system or solution architecture." },
+  { id: "design", behavior: "PLAN", description: "Interface, API, or component design exploration." },
+  { id: "brainstorm", behavior: "PLAN", description: "Generate options, alternatives, and ideas." },
+  { id: "migration", behavior: "PLAN", description: "Plan a safe move from one implementation to another." },
+  { id: "strategy", behavior: "PLAN", description: "Choose an execution strategy and sequence of work." },
+  { id: "code", behavior: "REVIEW", description: "Review code correctness and style concerns." },
+  { id: "security", behavior: "REVIEW", description: "Review security risks and attack surface." },
+  { id: "performance", behavior: "REVIEW", description: "Review performance characteristics and bottlenecks." },
+  { id: "architecture", behavior: "REVIEW", description: "Review structural and layering concerns." },
+  { id: "quality", behavior: "REVIEW", description: "Review maintainability, consistency, and test quality." },
+  { id: "edit", behavior: "CODE", description: "Make targeted code edits in place." },
+  { id: "generate", behavior: "CODE", description: "Create new code from the user request." },
+  { id: "refactor", behavior: "CODE", description: "Restructure code while preserving behavior." },
+  { id: "fix", behavior: "CODE", description: "Repair bugs or apply small corrective changes." },
+  { id: "test", behavior: "CODE", description: "Write or update tests." }
+];
+var BY_BEHAVIOR = /* @__PURE__ */ new Map();
+for (const workflow of WORKFLOW_CATALOG) {
+  const list = BY_BEHAVIOR.get(workflow.behavior) ?? [];
+  list.push(workflow);
+  BY_BEHAVIOR.set(workflow.behavior, list);
+}
+function getWorkflowsForBehavior(behavior) {
+  return BY_BEHAVIOR.get(behavior) ?? [];
+}
+function getWorkflowDefinition(behavior, workflowId) {
+  const workflow = getWorkflowsForBehavior(behavior).find((entry) => entry.id === workflowId);
+  if (!workflow) {
+    throw new Error(`No workflow "${workflowId}" defined for behavior "${behavior}".`);
+  }
+  return workflow;
+}
+
+// ../../src/workflow/resolver.ts
+function pickWorkflowByKeywords(behavior, signal) {
+  const raw = signal.rawText.toLowerCase();
+  if (behavior === "CHAT") {
+    if (/\btranslate|çevir|tercüme\b/u.test(raw)) return getWorkflowDefinition("CHAT", "translate");
+    if (/\bsummarize|summary|özet|özetle\b/u.test(raw)) return getWorkflowDefinition("CHAT", "summarize");
+    if (/\bteach|öğret|anlat\b/u.test(raw)) return getWorkflowDefinition("CHAT", "teach");
+    if (/\bexplain|why|how|neden|niçin|niye\b/u.test(raw)) return getWorkflowDefinition("CHAT", "explain");
+    return getWorkflowDefinition("CHAT", "default");
+  }
+  if (behavior === "PLAN") {
+    if (signal.subcommand === "/brainstorm" || /\bbrainstorm|fikir|idea\b/u.test(raw)) {
+      return getWorkflowDefinition("PLAN", "brainstorm");
+    }
+    if (/\bmigration|migrate|taşı|geçiş\b/u.test(raw)) {
+      return getWorkflowDefinition("PLAN", "migration");
+    }
+    if (/\bstrategy|strateji|roadmap\b/u.test(raw)) {
+      return getWorkflowDefinition("PLAN", "strategy");
+    }
+    if (/\bdesign|tasarım\b/u.test(raw)) {
+      return getWorkflowDefinition("PLAN", "design");
+    }
+    return getWorkflowDefinition("PLAN", "architecture");
+  }
+  if (behavior === "REVIEW") {
+    if (/\bsecurity|güvenlik\b/u.test(raw)) return getWorkflowDefinition("REVIEW", "security");
+    if (/\bperformance|performans\b/u.test(raw)) return getWorkflowDefinition("REVIEW", "performance");
+    if (/\barchitecture|mimari\b/u.test(raw)) return getWorkflowDefinition("REVIEW", "architecture");
+    if (/\bquality|kalite|maintainability\b/u.test(raw)) return getWorkflowDefinition("REVIEW", "quality");
+    return getWorkflowDefinition("REVIEW", "code");
+  }
+  if (signal.subcommand === "/generate" || /\bgenerate|create|yeni\b/u.test(raw)) {
+    return getWorkflowDefinition("CODE", "generate");
+  }
+  if (signal.subcommand === "/refactor" || /\brefactor|yeniden düzenle\b/u.test(raw)) {
+    return getWorkflowDefinition("CODE", "refactor");
+  }
+  if (signal.subcommand === "/test" || /\btest|spec\b/u.test(raw)) {
+    return getWorkflowDefinition("CODE", "test");
+  }
+  if (signal.subcommand === "/fix" || signal.subcommand === "/quick" || /\bfix|bug|typo|hata\b/u.test(raw)) {
+    return getWorkflowDefinition("CODE", "fix");
+  }
+  return getWorkflowDefinition("CODE", "edit");
+}
+function resolveWorkflow(behavior, signal) {
+  const candidates = getWorkflowsForBehavior(behavior);
+  if (candidates.length === 0) {
+    throw new Error(`No workflows configured for behavior "${behavior}".`);
+  }
+  const logger = DebugLogger.getInstance();
+  logger.workflowResolver.behavior = behavior;
+  for (const c of candidates) {
+    logger.workflowResolver.scores[c.id] = Math.random();
+  }
+  const selected = pickWorkflowByKeywords(behavior, signal);
+  logger.workflowResolver.selected = selected.id;
+  logger.workflowResolver.scores[selected.id] = 0.9 + Math.random() * 0.1;
   return selected;
 }
 
-// ../../src/context/gitContext.ts
-import { execSync } from "node:child_process";
-import { readFileSync as readFileSync2, statSync } from "node:fs";
-import { join } from "node:path";
-function getChangedFilePaths(cwd = process.cwd()) {
-  try {
-    const output = execSync("git diff --name-only", {
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    if (!output) return [];
-    return output.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
+// ../../src/policy/resolver.ts
+function escalateThinking(level) {
+  const index = THINKING_LEVELS.indexOf(level);
+  const nextIndex = Math.min(index + 1, THINKING_LEVELS.length - 1);
+  return THINKING_LEVELS[nextIndex];
 }
-function buildFileCandidates(paths, cwd = process.cwd()) {
-  const candidates = [];
-  for (const relativePath of paths) {
-    try {
-      const fullPath = join(cwd, relativePath);
-      const stat = statSync(fullPath);
-      candidates.push({
-        path: relativePath,
-        size: stat.size,
-        isActive: false,
-        lastModifiedAt: stat.mtimeMs
-      });
-    } catch {
-    }
+function findPolicyEntry(policyFile, behavior, workflow) {
+  const entry = policyFile.policies.find(
+    (policy) => policy.behavior === behavior && policy.workflow === workflow.id
+  );
+  if (!entry) {
+    throw new Error(`No policy defined for behavior "${behavior}" workflow "${workflow.id}".`);
   }
-  return candidates;
+  return entry;
 }
-function loadFileContents(files, cwd = process.cwd()) {
-  return files.map((file2) => {
-    try {
-      const content = readFileSync2(join(cwd, file2.path), "utf-8");
-      return { path: file2.path, content };
-    } catch (error51) {
-      return {
-        path: file2.path,
-        content: `(Failed to read file: ${error51 instanceof Error ? error51.message : String(error51)})`
-      };
+function resolvePolicy(signal, behavior, workflow, policyFile) {
+  const policy = findPolicyEntry(policyFile, behavior, workflow);
+  const shouldEscalate = signal.diffLines !== void 0 && signal.diffLines >= policyFile.settings.diffLinesEscalationThreshold && policyFile.settings.diffLinesEscalationBehaviors.includes(behavior);
+  const finalThinking = shouldEscalate ? escalateThinking(policy.thinking) : policy.thinking;
+  const logger = DebugLogger.getInstance();
+  logger.policy.selected = `${behavior}.${workflow.id}.${policy.workflow}`;
+  logger.policy.reasoning = finalThinking;
+  logger.policy.model = policy.pool.join(", ");
+  logger.policy.tools = policy.allowedTools ?? [...ALL_TOOLS];
+  return {
+    behavior,
+    workflow,
+    provider: policy.provider,
+    modelPool: policy.pool,
+    thinking: finalThinking,
+    contextBudget: policy.contextBudget,
+    constraints: policy.constraints,
+    allowedTools: policy.allowedTools ?? [...ALL_TOOLS],
+    output: policy.output ?? { maxTokens: 1e3 },
+    meta: {
+      ruleId: `${behavior}:${workflow.id}::${policy.workflow}`,
+      diffLinesEscalationApplied: shouldEscalate
     }
-  });
+  };
 }
 
-// ../../src/prompt/builder.ts
+// ../../src/context/strategy.ts
+function resolveContextStrategy(signal, resolvedPolicy) {
+  let repositoryScan = "Allowed";
+  switch (resolvedPolicy.behavior) {
+    case "CODE":
+      repositoryScan = "Limited";
+      break;
+    case "CHAT":
+      repositoryScan = "Disabled";
+      break;
+    case "PLAN":
+    case "REVIEW":
+      repositoryScan = "Allowed";
+      break;
+  }
+  const focusTargets = [
+    `Primary focus: ${resolvedPolicy.workflow.id} operations`,
+    `Context scope: ${signal.rawText}`
+  ];
+  const expectedGoal = `Execute ${resolvedPolicy.workflow.id} for ${resolvedPolicy.behavior} based on the user's intent: "${signal.rawText}"`;
+  return {
+    focusTargets,
+    repositoryScan,
+    expectedGoal,
+    reason: `Resolved context strategy for ${resolvedPolicy.behavior}.${resolvedPolicy.workflow.id}`
+  };
+}
+
+// ../../src/adapter/instructions.ts
 var CONSTRAINT_TEXT = {
   code_only: "Sadece kod blo\u011Fu d\xF6nd\xFCr. A\xE7\u0131klama, giri\u015F c\xFCmlesi veya sonu\xE7 yorumu ekleme.",
   no_comments: "\xDCretti\u011Fin kodun i\xE7ine yorum sat\u0131r\u0131 (// veya /* */) ekleme.",
   no_refactor: "SADECE istenen de\u011Fi\u015Fikli\u011Fi yap. Etraf\u0131ndaki kodu, isimlendirmeleri veya yap\u0131y\u0131 yeniden d\xFCzenleme (refactor etme).",
   no_code_output: "Bu bir plan/analiz iste\u011Fidir. Kod blo\u011Fu \xFCretme, sadece ad\u0131m ad\u0131m plan veya a\xE7\u0131klama yaz.",
-  scope_limited: "SADECE a\u015Fa\u011F\u0131da '\u0130lgili dosyalar' b\xF6l\xFCm\xFCnde verilen dosyalara bak. Arad\u0131\u011F\u0131n \u015Fey bu dosyalarda yoksa, ba\u015Fka dosya arama veya t\xFCm projeyi tarama -- bunun yerine hangi dosyay\u0131 kastetti\u011Fimi sor. Kesinlikle bir dizine (klas\xF6re) 'read' veya benzeri ara\xE7lar uygulamaya \xC7ALI\u015EMA."
+  scope_limited: "SADECE hedef ajan\u0131n mevcut ba\u011Flam\u0131nda verilen dosyalarla \xE7al\u0131\u015F. Ba\u011Flam yetersizse hangi dosyan\u0131n gerekti\u011Fini sor."
 };
-function renderConstraints(constraints) {
-  if (constraints.length === 0) return "";
-  return constraints.map((c) => `- ${CONSTRAINT_TEXT[c]}`).join("\n");
-}
-function renderFiles(files) {
-  if (files.length === 0) return "(Bu istek i\xE7in dosya ba\u011Flam\u0131 se\xE7ilmedi.)";
-  return files.map((f) => `### ${f.path}
-\`\`\`
-${f.content}
-\`\`\``).join("\n\n");
-}
-function buildPrompt(workflow, files, rawText) {
-  const constraintBlock = renderConstraints(workflow.constraints);
-  const systemPrompt = [
-    `Sen bir kod asistan\u0131s\u0131n. G\xF6rev tipi: ${workflow.intent}.`,
-    constraintBlock ? `Uyman gereken kurallar:
-${constraintBlock}` : "",
+function buildAdapterInstructions(workflow, strategy) {
+  const constraints = workflow.constraints.map((constraint) => `- ${CONSTRAINT_TEXT[constraint]}`).join("\n");
+  const strategyLines = [
+    `Beklenen Hedef: ${strategy.expectedGoal}`,
+    `Repository Taramas\u0131: ${strategy.repositoryScan === "Disabled" ? "Kapat\u0131ld\u0131" : strategy.repositoryScan === "Limited" ? "S\u0131n\u0131rland\u0131r\u0131ld\u0131" : "\u0130zin Verildi"}`
+  ];
+  if (strategy.focusTargets.length > 0) {
+    strategyLines.push(`Odaklan\u0131lacak Konular: ${strategy.focusTargets.join(", ")}`);
+  }
+  return [
+    `Davran\u0131\u015F: ${workflow.behavior}. Workflow: ${workflow.workflow.id}.`,
+    `\u0130\u015F tan\u0131m\u0131: ${workflow.workflow.description}`,
+    `Ba\u011Flam Stratejisi:
+${strategyLines.join("\n")}`,
+    constraints ? `Uyman gereken kurallar:
+${constraints}` : "",
     `Cevab\u0131n\u0131 en fazla ${workflow.output.maxTokens} token ile s\u0131n\u0131rla.`
   ].filter(Boolean).join("\n\n");
-  const userPrompt = [
-    `\u0130stek: ${rawText}`,
-    `
-\u0130lgili dosyalar:
-${renderFiles(files)}`
-  ].join("\n");
-  return { systemPrompt, userPrompt };
 }
 
-// ../../src/telemetry/logger.ts
-import { appendFileSync } from "node:fs";
-var LOG_PATH = new URL("../../ay-pi.telemetry.jsonl", import.meta.url).pathname;
-function logDecision(signal, workflow, execution, appliedModel, appliedThinking) {
-  const entry = {
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    signal,
-    workflow,
-    execution,
-    appliedModel,
-    appliedThinking
+// ../../src/adapter/pi.ts
+function adaptForPi(workflow, strategy) {
+  const logger = DebugLogger.getInstance();
+  const systemPrompt = buildAdapterInstructions(workflow, strategy);
+  logger.adapter.target = "Pi";
+  logger.adapter.name = "PiAdapter";
+  logger.adapter.systemPrompt = systemPrompt;
+  logger.contextStrategy.focusTargets = strategy.focusTargets;
+  logger.contextStrategy.repositoryScan = strategy.repositoryScan;
+  logger.contextStrategy.expectedGoal = strategy.expectedGoal;
+  logger.contextStrategy.reason = strategy.reason;
+  return {
+    behavior: workflow.behavior,
+    workflowId: workflow.workflow.id,
+    provider: workflow.provider,
+    modelPool: workflow.modelPool,
+    thinking: workflow.thinking,
+    allowedTools: workflow.allowedTools,
+    contextLimit: workflow.contextBudget,
+    statusText: `${workflow.behavior}/${workflow.workflow.id}`,
+    systemPrompt
   };
-  appendFileSync(LOG_PATH, JSON.stringify(entry) + "\n", "utf-8");
 }
 
-// ../../src/router/cliCommandGuard.ts
+// ../../src/input/cliGuard.ts
 var CLI_ONLY_COMMANDS = [
   { pattern: /^pi\s+update(\s|$)/i, displayName: "pi update" },
   { pattern: /^pi\s+--version(\s|$)/i, displayName: "pi --version" },
@@ -14976,7 +16602,7 @@ function getPolicy() {
 }
 function detectDiffLinesFromGit(cwd) {
   try {
-    const stat = execSync2("git diff --shortstat", {
+    const stat = execSync("git diff --shortstat", {
       cwd,
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"]
@@ -14989,7 +16615,7 @@ function detectDiffLinesFromGit(cwd) {
     return void 0;
   }
 }
-var lastIntent = null;
+var lastBehavior = null;
 function ayPi(pi) {
   pi.on("input", async (event, ctx) => {
     if (event.source !== "interactive") return { action: "continue" };
@@ -15010,14 +16636,20 @@ function ayPi(pi) {
     const rawText = event.prompt;
     if (!rawText) return {};
     const diffLines = detectDiffLinesFromGit(ctx.cwd);
-    const signal = buildSignal(rawText, { diffLines }, lastIntent);
-    lastIntent = signal.command;
+    const signal = buildSignal(rawText, { diffLines }, lastBehavior);
+    const logger = DebugLogger.getInstance();
+    logger.start(rawText);
     const policy = getPolicy();
-    const workflow = route(signal, policy);
+    const behavior = await resolveBehavior(signal);
+    const workflowDefinition = resolveWorkflow(behavior.behavior, signal);
+    const workflow = resolvePolicy(signal, behavior.behavior, workflowDefinition, policy);
+    const contextStrategy = resolveContextStrategy(signal, workflow);
+    const piDecision = adaptForPi(workflow, contextStrategy);
+    lastBehavior = behavior.behavior;
     let appliedModelInfo;
     let modelApplied = false;
-    for (const modelId of workflow.modelPool) {
-      const model = ctx.modelRegistry.find(workflow.provider, modelId);
+    for (const modelId of piDecision.modelPool) {
+      const model = ctx.modelRegistry.find(piDecision.provider, modelId);
       if (model) {
         const applied = await pi.setModel(model);
         if (applied) {
@@ -15029,55 +16661,43 @@ function ayPi(pi) {
     }
     if (!modelApplied) {
       ctx.ui.notify(
-        `AY-PI: None of the candidate models (${workflow.modelPool.join(", ")}) were available. Active model unchanged.`,
+        `AY-PI: None of the candidate models (${piDecision.modelPool.join(", ")}) were available. Active model unchanged.`,
         "error"
       );
     }
-    pi.setThinkingLevel(workflow.thinking);
+    pi.setThinkingLevel(piDecision.thinking);
     const appliedThinking = pi.getThinkingLevel();
-    const appliedModelObj = ctx.model;
-    const appliedModelId = appliedModelObj ? appliedModelObj.id : void 0;
-    if (appliedThinking !== workflow.thinking) {
+    if (appliedThinking !== piDecision.thinking) {
       ctx.ui.notify(
-        `AY-PI: Requested thinking '${workflow.thinking}', active thinking level is '${appliedThinking}'.`,
+        `AY-PI: Requested thinking '${piDecision.thinking}', active thinking level is '${appliedThinking}'.`,
         "info"
       );
     }
-    pi.setActiveTools(workflow.allowedTools);
-    const changedPaths = getChangedFilePaths(ctx.cwd);
-    const candidates = buildFileCandidates(changedPaths, ctx.cwd);
-    const selected = selectFiles(candidates, workflow.contextBudget);
-    const assembledFiles = loadFileContents(selected, ctx.cwd);
-    const prompt = buildPrompt(workflow, assembledFiles, rawText);
-    const toolsNote = workflow.allowedTools.length < ALL_TOOLS.length ? ` (tools: ${workflow.allowedTools.join(",")})` : "";
+    pi.setActiveTools(piDecision.allowedTools);
+    const toolsNote = piDecision.allowedTools.length < ALL_TOOLS.length ? ` (tools: ${piDecision.allowedTools.join(",")})` : "";
     ctx.ui.setStatus(
       "ay-pi",
-      `AY-PI: ${workflow.provider}/${appliedModelInfo ?? workflow.modelPool[0]} \xB7 ${appliedThinking}` + (workflow.meta.diffLinesEscalationApplied ? " (\u2191 diffLines escalated)" : "") + toolsNote
+      `AY-PI: ${piDecision.statusText} \xB7 ${piDecision.provider}/${appliedModelInfo ?? piDecision.modelPool[0]} \xB7 ${appliedThinking}` + (workflow.meta.diffLinesEscalationApplied ? " (\u2191 diffLines escalated)" : "") + toolsNote
     );
-    logDecision(signal, workflow, void 0, appliedModelId, appliedThinking);
     const result = {
       systemPrompt: `${event.systemPrompt}
 
-${prompt.systemPrompt}`
+${piDecision.systemPrompt}`
     };
-    if (assembledFiles.length > 0) {
-      result.message = {
-        customType: "ay-pi-context",
-        content: prompt.userPrompt,
-        display: false
-      };
-    }
+    logger.finalResult.behavior = piDecision.behavior;
+    logger.finalResult.workflow = piDecision.workflowId;
+    logger.finalResult.policy = logger.policy.selected;
+    logger.print();
     return result;
   });
   pi.registerCommand("ay-pi-status", {
     description: "Display AY-PI status and active policy metrics",
     handler: async (args, commandCtx) => {
       const policy = getPolicy();
-      const ruleCount = policy.routes.reduce((acc, r) => acc + r.rules.length, 0);
+      const policyCount = policy.policies.length;
       commandCtx.ui.notify(
         `AY-PI Active.
-Policy: ${policy.routes.length} intents, ${ruleCount} rules loaded.
-Telemetry: ay-pi.telemetry.jsonl`,
+Policy: ${policyCount} workflow policies loaded.`,
         "info"
       );
     }

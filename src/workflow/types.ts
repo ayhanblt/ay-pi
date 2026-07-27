@@ -1,18 +1,17 @@
+import type { Behavior } from "@/behavior/types.js";
+
 /**
  * WORKFLOW TYPES
  * --------------
- * Defines the structure of the final decision object produced by AY-PI.
- * Every request processed through the Router, Context Assembler, and Prompt Builder
- * evaluates into a WorkflowObject. This structured decision object is consumed by
- * downstream execution layers (such as Pi or a test CLI executor).
+ * Defines shared workflow execution types and the adapter output consumed by
+ * downstream execution layers such as Pi and the CLI.
  */
 
 // Specifies the reasoning intensity level. Matches the native Pi thinking level API,
 // allowing direct usage with `pi.setThinkingLevel()`.
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-// Ordered hierarchy of thinking levels used by `escalateThinking()` (router/index.ts)
-// to step up reasoning intensity.
+// Ordered hierarchy of thinking levels used when policy escalation steps reasoning up.
 export const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
 // Constraints governing context retrieval limits.
@@ -32,29 +31,32 @@ export type Constraint =
   | "scope_limited";  // Restrict inspection to injected files only
 
 // Built-in tools supported by Pi.
-// If a policy rule does not specify `allowedTools`, `route()` defaults to this complete list,
-// permitting unrestricted tool access unless explicitly restricted by a rule (e.g. /quick).
+// Policy uses the complete list unless a workflow policy explicitly restricts it.
 export const ALL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
 export type ToolName = (typeof ALL_TOOLS)[number];
 
-// Router decision regarding output token limit constraints.
+export interface WorkflowDefinition {
+  id: string;
+  behavior: Behavior;
+  description: string;
+}
+
 export interface OutputConstraint {
   maxTokens: number;
 }
 
 /**
- * WorkflowObject: The unified output of the routing pipeline.
- * Produced by the Router, populated with context by Context Assembler,
- * formatted into system prompts by Prompt Builder, and executed downstream.
+ * Workflow: selected behavior and workflow with policy controls applied.
+ * Adapter modules convert this object for each target agent.
  *
  * modelPool: Ordered list of candidate models (e.g. ["kimi-k2.7-code", "deepseek-v4-pro", "minimax-m3"]).
  * `modelPool[0]` represents the primary target model.
  *
- * allowedTools: Tools accessible to the model during the current turn. Specified by the Router
- * based on the active policy rule, and applied via `pi.setActiveTools()`.
+ * allowedTools: Tools accessible to the target agent during the current turn.
  */
-export interface WorkflowObject {
-  intent: string;              // e.g. "/code", "/plan", "/chat"
+export interface Workflow {
+  behavior: Behavior;
+  workflow: WorkflowDefinition;
   provider: string;            // e.g. "opencode-go", "anthropic"
   modelPool: string[];         // Ordered model candidate pool, [0] is primary
   thinking: ThinkingLevel;
@@ -63,8 +65,7 @@ export interface WorkflowObject {
   output: OutputConstraint;
   allowedTools: ToolName[];          // Tools accessible to the model (e.g. ["read", "edit"])
   meta: {
-    ruleId: string;                        // Triggered policy rule identifier (for telemetry/debugging)
+    ruleId: string;                        // Triggered policy rule identifier
     diffLinesEscalationApplied: boolean;    // Indicates whether thinking level was elevated due to diffLines threshold
   };
 }
-
