@@ -1,5 +1,5 @@
 {
-  "name": "ay-pi",
+  "name": "@ayhanblt/ay-pi",
   "version": "1.0.0",
   "description": "Deterministic, CPU-first model/thinking routing extension for Pi",
   "type": "module",

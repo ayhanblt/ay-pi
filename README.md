@@ -11,7 +11,7 @@ Routing is deterministic and local: no routing LLM, no vector database, no netwo
 You can install the extension directly into your Pi workspace using the following command:
 
 ```bash
-pi install npm:ay-pi
+pi install npm:@ayhanblt/ay-pi
 ```
 
 ## How Routing Works
