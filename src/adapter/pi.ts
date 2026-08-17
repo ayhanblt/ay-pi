@@ -2,6 +2,7 @@ import type { Workflow } from "@/workflow/types.js";
 import { buildAdapterInstructions } from "@/adapter/instructions.js";
 import type { ContextStrategy } from "@/context/types.js";
 import { DebugLogger } from "@/telemetry/debugLogger.js";
+import type { PlanArtifact } from "@/state/types.js";
 
 export interface PiAdapterDecision {
   behavior: Workflow["behavior"];
@@ -15,9 +16,9 @@ export interface PiAdapterDecision {
   systemPrompt: string;
 }
 
-export function adaptForPi(workflow: Workflow, strategy: ContextStrategy): PiAdapterDecision {
+export function adaptForPi(workflow: Workflow, strategy: ContextStrategy, plan?: PlanArtifact): PiAdapterDecision {
   const logger = DebugLogger.getInstance();
-  const systemPrompt = buildAdapterInstructions(workflow, strategy);
+  const systemPrompt = buildAdapterInstructions(workflow, strategy, plan);
   logger.adapter.target = "Pi";
   logger.adapter.name = "PiAdapter";
   logger.adapter.systemPrompt = systemPrompt;

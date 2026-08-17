@@ -40,12 +40,18 @@ export async function resolveWorkflow(behavior: Behavior, signal: RequestSignal)
 
   logger.workflowResolver.explicitCommand = explicitId;
   
-  if (explicitId && candidates.some(c => c.id === explicitId)) {
+  if (signal.forcedWorkflow && candidates.some(c => c.id === signal.forcedWorkflow)) {
+    selectedId = signal.forcedWorkflow;
+    logger.workflowResolver.isDefaultFallback = false;
+  } else if (explicitId && candidates.some(c => c.id === explicitId)) {
     selectedId = explicitId;
     logger.workflowResolver.isDefaultFallback = false;
+  } else if (signal.command && !signal.subcommand) {
+    selectedId = getDefaultWorkflowId(behavior);
+    logger.workflowResolver.isDefaultFallback = true;
   } else {
-    selectedId = await resolveWorkflowBySemantics(behavior, signal);
-    logger.workflowResolver.isDefaultFallback = false;
+    selectedId = (await resolveWorkflowBySemantics(behavior, signal)) ?? getDefaultWorkflowId(behavior);
+    logger.workflowResolver.isDefaultFallback = !logger.workflowResolver.scores[selectedId];
   }
 
   const selected = getWorkflowDefinition(behavior, selectedId);

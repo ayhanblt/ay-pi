@@ -12,7 +12,7 @@ const BEHAVIOR_COMMANDS: Record<string, Behavior> = {
 
 export function resolveBehaviorByRule(signal: RequestSignal): BehaviorResolution | null {
   const logger = DebugLogger.getInstance();
-  
+
   const explicit = BEHAVIOR_COMMANDS[signal.command];
   if (explicit) {
     logger.ruleEngine.confidence = 1;
@@ -22,6 +22,17 @@ export function resolveBehaviorByRule(signal: RequestSignal): BehaviorResolution
       confidence: 1,
       source: "rule",
       ruleId: `behavior::command.${signal.command.slice(1)}`,
+    };
+  }
+
+  if (signal.forcedBehavior) {
+    logger.ruleEngine.confidence = 1;
+    logger.ruleEngine.decision = signal.forcedBehavior;
+    return {
+      behavior: signal.forcedBehavior,
+      confidence: 1,
+      source: "rule",
+      ruleId: "handoff::forced-behavior",
     };
   }
 

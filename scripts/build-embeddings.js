@@ -45,11 +45,11 @@ const WORKFLOW_CATALOG = [
   { id: "brainstorm", behavior: "PLAN", description: "idea generation and alternatives (fikir, beyin fırtınası)" },
   { id: "migration", behavior: "PLAN", description: "moving from one structure to another (taşıma, geçiş)" },
   { id: "strategy", behavior: "PLAN", description: "roadmap and decision planning (strateji, yol haritası)" },
-  { id: "code", behavior: "REVIEW", description: "Review code correctness and style concerns." },
-  { id: "security", behavior: "REVIEW", description: "Review security risks and attack surface." },
-  { id: "performance", behavior: "REVIEW", description: "Review performance characteristics and bottlenecks." },
-  { id: "architecture", behavior: "REVIEW", description: "Review structural and layering concerns." },
-  { id: "quality", behavior: "REVIEW", description: "Review maintainability, consistency, and test quality." },
+  { id: "code", behavior: "REVIEW", description: "Code correctness, logic errors, type errors, bugs, and coding style. Kodun doğru çalışması, hata ve stil incelemesi. Genel kod incelemesi; güvenlik ve performans dışı sorunlar.", examples: ["Kodda hata var mı, doğru çalışıyor mu, genel code review yap.", "Type error, logic bug ve style sorunlarını incele."] },
+  { id: "security", behavior: "REVIEW", description: "Security vulnerabilities, attack surface, authentication, authorization, secrets, injection, XSS, CSRF, access control, data exposure. Güvenlik açığı, saldırı, yetkilendirme, kimlik doğrulama ve güvenlik riskleri.", examples: ["Güvenlik.", "Security vulnerability audit.", "Güvenlik açıklarını ve saldırı risklerini incele.", "Authentication, authorization, injection, XSS ve secret sızıntısı var mı?"] },
+  { id: "performance", behavior: "REVIEW", description: "Performance, speed, latency, memory, CPU, database queries, rendering, bottlenecks, scalability, optimization. Performans darboğazları, yavaşlık ve kaynak tüketimi." },
+  { id: "architecture", behavior: "REVIEW", description: "Architecture review, system structure, module boundaries, layering, coupling, dependency direction, maintainability. Sistem mimarisini, katmanları ve bileşen ilişkilerini incele." },
+  { id: "quality", behavior: "REVIEW", description: "Software quality review, maintainability, consistency, readability, test coverage, duplication, technical debt. Kod kalitesi, sürdürülebilirlik, test kapsamı ve teknik borcu incele." },
   { id: "edit", behavior: "CODE", description: "Make targeted code edits in place. (mevcut kodu düzenle, ufak değişiklik)" },
   { id: "generate", behavior: "CODE", description: "Create new code from the user request. (yeni kod üret, oluştur)" },
   { id: "refactor", behavior: "CODE", description: "Restructure code while preserving behavior. (refactor et, iyileştir)" },
@@ -92,18 +92,19 @@ async function generateEmbeddings() {
   const workflowCatalogWithEmbeddings = [];
   for (const workflow of WORKFLOW_CATALOG) {
     console.log(`Generating embedding for Workflow ${workflow.behavior}.${workflow.id}...`);
-    const output = await extractor(`passage: ${workflow.description}`, {
-      pooling: "mean",
-      normalize: true,
-    });
-    
-    const embedding = Array.from(output.data);
+    const descriptions = [workflow.description, ...(workflow.examples ?? [])];
+    const embeddings = [];
+    for (const description of descriptions) {
+      const output = await extractor(`passage: ${description}`, { pooling: "mean", normalize: true });
+      embeddings.push(Array.from(output.data));
+    }
     
     workflowCatalogWithEmbeddings.push({
       id: workflow.id,
       behavior: workflow.behavior,
       description: workflow.description,
-      embedding,
+      embedding: embeddings[0],
+      embeddings,
     });
   }
   fs.writeFileSync(WORKFLOW_CATALOG_PATH, JSON.stringify(workflowCatalogWithEmbeddings, null, 2));

@@ -46,17 +46,18 @@ const PolicyFileSchema = z.object({
   policies: z.array(PolicyEntrySchema).min(1),
 });
 
-export function loadPolicies(filePath: string): PolicyFile {
-  const raw = readFileSync(filePath, "utf-8");
-  const parsed = JSON.parse(raw);
-
+export function parsePolicies(parsed: unknown, source = "policy") : PolicyFile {
   const result = PolicyFileSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues
       .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("\n");
-    throw new Error(`${filePath} is invalid:\n${issues}`);
+    throw new Error(`${source} is invalid:\n${issues}`);
   }
 
   return result.data as PolicyFile;
+}
+
+export function loadPolicies(filePath: string): PolicyFile {
+  return parsePolicies(JSON.parse(readFileSync(filePath, "utf-8")), filePath);
 }

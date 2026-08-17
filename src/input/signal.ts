@@ -1,4 +1,5 @@
 import type { RequestSignal } from "@/input/types.js";
+export { detectRequestedModel } from "@/model/ids.js";
 
 function detectIntent(rawText: string): string {
   const trimmed = rawText.trim();
@@ -18,7 +19,7 @@ function detectSubcommand(rawText: string): string | undefined {
 
 export function buildSignal(
   rawText: string,
-  overrides: Partial<Pick<RequestSignal, "diffLines" | "changedFileCount" | "openFileCount">> = {}
+  overrides: Partial<Pick<RequestSignal, "diffLines" | "changedFileCount" | "openFileCount" | "previousBehavior" | "previousWorkflow" | "activePlan" | "forcedBehavior" | "forcedWorkflow">> = {}
 ): RequestSignal {
   return {
     command: detectIntent(rawText),

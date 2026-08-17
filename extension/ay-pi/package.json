@@ -1,6 +1,6 @@
 {
   "name": "@ayhanblt/ay-pi",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "description": "Deterministic, CPU-first model/thinking routing extension for Pi",
   "type": "module",
   "main": "./dist/index.js",
@@ -28,12 +28,13 @@
     "package.json"
   ],
   "dependencies": {
+    "@xenova/transformers": "^2.17.2",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.3"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/pi-coding-agent --external:@xenova/transformers --external:onnxruntime-node --external:sharp --outfile=dist/index.js"
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --tsconfig=../../tsconfig.json --external:@earendil-works/pi-coding-agent --external:@xenova/transformers --external:onnxruntime-node --external:sharp --outfile=dist/index.js"
   }
 }

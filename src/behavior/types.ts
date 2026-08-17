@@ -5,5 +5,7 @@ export interface BehaviorResolution {
   confidence: number;
   source: "rule" | "semantic" | "fallback";
   ruleId: string;
+  topScore?: number;
+  secondScore?: number;
+  margin?: number;
 }
-

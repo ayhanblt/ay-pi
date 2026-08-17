@@ -1,5 +1,6 @@
 import type { Constraint, Workflow } from "@/workflow/types.js";
 import type { ContextStrategy } from "@/context/types.js";
+import type { PlanArtifact } from "@/state/types.js";
 
 const CONSTRAINT_TEXT: Record<Constraint, string> = {
   code_only:
@@ -20,7 +21,7 @@ const CONSTRAINT_TEXT: Record<Constraint, string> = {
     "Bağlam yetersizse hangi dosyanın gerektiğini sor.",
 };
 
-export function buildAdapterInstructions(workflow: Workflow, strategy: ContextStrategy): string {
+export function buildAdapterInstructions(workflow: Workflow, strategy: ContextStrategy, plan?: PlanArtifact): string {
   const constraints = workflow.constraints.map((constraint) => `- ${CONSTRAINT_TEXT[constraint]}`).join("\n");
   
   const strategyLines = [
@@ -32,14 +33,18 @@ export function buildAdapterInstructions(workflow: Workflow, strategy: ContextSt
     strategyLines.push(`Odaklanılacak Konular: ${strategy.focusTargets.join(", ")}`);
   }
 
+  const planText = plan && workflow.behavior === "CODE"
+    ? `Onaylanmış plan artefact'ı (bu adımları uygula; yeniden planlama yapma):\n${plan.content}`
+    : "";
+
   return [
     `Davranış: ${workflow.behavior}. Workflow: ${workflow.workflow.id}.`,
     `İş tanımı: ${workflow.workflow.description}`,
     `Bağlam Stratejisi:\n${strategyLines.join("\n")}`,
     constraints ? `Uyman gereken kurallar:\n${constraints}` : "",
+    planText,
     `Cevabını en fazla ${workflow.output.maxTokens} token ile sınırla.`,
   ]
     .filter(Boolean)
     .join("\n\n");
 }
-

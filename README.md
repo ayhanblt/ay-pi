@@ -1,164 +1,91 @@
 # AY-PI
 
-**A deterministic, CPU-first behavior/workflow selector for [Pi](https://pi.dev).**
+AY-PI is a Pi coding-agent extension that analyzes user requests and routes them to the appropriate behavior, workflow, model, thinking level, and tool set.
 
-AY-PI does not generate answers. It selects a **behavior**, selects a **workflow**, applies **policy**, resolves a **context strategy**, and hands the result to an adapter. The adapter converts the decision into a Pi-specific system prompt, model selection, thinking level, and tool restrictions.
-
-Routing is deterministic and local: no routing LLM, no vector database, no network calls during routing. A CPU-only semantic engine (ONNX embeddings) acts as a fallback when the rule engine cannot decide with sufficient confidence.
+AY-PI does not require users to provide an intent. Explicit `/plan`, `/review`, `/code`, and `/suggest` commands always take priority; when no intent is provided, the local semantic engine classifies the request as planning, review, coding, suggestion, or chat. When confidence is insufficient, it abstains and safely falls back to `CHAT`.
 
 ## Installation
-
-You can install the extension directly into your Pi workspace using the following command:
 
 ```bash
 pi install npm:@ayhanblt/ay-pi
 ```
 
-## How Routing Works
+Routing does not use a remote routing model or vector database. The embedding model is loaded locally through ONNX at runtime.
 
-```
-User Prompt
-    │
-    ▼
-RequestSignal  (command, rawText, diffLines, previousBehavior, ...)
-    │
-    ▼
-┌──────────────────────────────────────────┐
-│  Rule Engine   (deterministic keywords)  │
-│  confidence ≥ 0.55?  ─── yes ──▶ Behavior │
-└──────────────────────────────────────────┘
-    │ no
-    ▼
-┌──────────────────────────────────────────┐
-│  Semantic Engine (CPU ONNX embeddings)   │
-│  cosine similarity vs behavior catalog ─▶│ Behavior
-└──────────────────────────────────────────┘
-    │
-    ▼
-Workflow Resolver   ──▶  Workflow
-    │
-    ▼
-Policy              ──▶  model pool, thinking, tools, constraints
-    │
-    ▼
-Context Strategy    ──▶  focus targets, repository scan, goal
-    │
-    ▼
-Adapter (Pi)        ──▶  system prompt injection, model & tool selection
+## Routing flow
+
+```text
+User request
+  → explicit command/subcommand syntax
+  → semantic session-transition classification
+  → semantic behavior + confidence/margin
+  → workflow
+  → policy
+  → context strategy
+  → Pi adapter
 ```
 
-**Cascade rule:** the Rule Engine runs first. Only when it cannot reach the confidence threshold (`RULE_CONFIDENCE_THRESHOLD = 0.55`) does the Semantic Engine engage. This keeps the fast path fast and reserves embeddings for ambiguous requests.
+Explicit commands always take precedence over semantic classification. The semantic engine uses both the top score and the margin over the second-best candidate. If either threshold is not met, it does not force a risky decision.
 
-## Behaviors
+## Applying a plan
 
-| Behavior | Meaning |
-|----------|---------|
-| `CHAT` | General conversation, explanations, teaching, summaries, translations. No code changes. |
-| `PLAN` | High-level planning, architecture, brainstorming, migration, strategy. No code output. |
-| `REVIEW` | Evaluate/audit existing work — correctness, security, performance, architecture, quality. |
-| `CODE` | Modify the project — implement, refactor, fix, generate, test. Writes code. |
-| `SUGGEST` | Recommend options and trade-offs (colors, approaches, technologies, design) **without applying code**. |
+After a PLAN turn completes, the assistant output is stored as a `PlanArtifact` in the Pi session. When the user confirms the plan, AY-PI passes the same artifact to the coding model instead of asking it to create a new plan.
 
-`SUGGEST` is what distinguishes a *request for ideas* from a *request for changes*. A prompt like "banner için renk öner" routes to `SUGGEST` (with the `suggest_only` constraint and no write/edit tools) instead of `CODE`, so the agent advises rather than applies.
+```text
+PLAN → proposed
+confirmation → approved
+CODE turn → executing
+```
 
-## Workflows
+Natural-language confirmation is classified semantically rather than through a growing regex keyword list.
 
-- `CHAT`: `default`, `explain`, `summarize`, `teach`, `translate`
-- `PLAN`: `architecture`, `design`, `brainstorm`, `migration`, `strategy`
-- `REVIEW`: `code`, `security`, `performance`, `architecture`, `quality`
-- `CODE`: `edit`, `generate`, `refactor`, `fix`, `test`
-- `SUGGEST`: `color`, `approach`, `technology`, `design-option`
+## Clean model switching
+
+To continue the last coding request with another model without including the unfinished assistant response in the new context:
+
+```text
+/ay-pi-switch kimi-v2.7-code
+```
+
+The command interrupts the active turn when necessary, creates a clean Pi branch before the previous assistant response, switches the model, and resubmits the last user request. If a user writes a natural-language model-switch request, AY-PI detects it semantically and displays the safe command.
 
 ## Commands
 
-Users can force a behavior with a leading slash command:
+- `/ay-pi-status` — show loaded policy metrics.
+- `/ay-pi-reload-policy` — clear and reload the policy cache.
+- `/ay-pi-switch <model>` — continue the last request on a clean branch with another model.
 
-| Command | Behavior |
-|---------|----------|
-| `/chat` | `CHAT` |
-| `/plan` | `PLAN` |
-| `/review` | `REVIEW` |
-| `/code` | `CODE` |
-| `/suggest` | `SUGGEST` |
+## Behaviors
 
-Subcommands refine the workflow, e.g. `/code /quick fix typo` → `CODE/fix`, or `/code /refactor ...` → `CODE/refactor`.
-
-## Sticky Routing
-
-AY-PI remembers the previous turn's behavior and applies transition boosts:
-
-- `PLAN → CODE`: when the user confirms a plan with words like "uygula", "apply", "devam et", the next turn escalates to `CODE`.
-- `PLAN → SUGGEST` / `REVIEW → SUGGEST`: when the user asks "öner", "suggest", "tavsiye", "ne dersin" within a planning/reviewing context.
-
-This preserves conversation continuity locally.
-
-## Context Strategy
-
-For each turn, AY-PI resolves a context strategy that the adapter injects into the system prompt:
-
-- **Repository scan** — `Disabled` for `CHAT`, `Limited` for `CODE`/`SUGGEST`, `Allowed` for `PLAN`/`REVIEW`.
-- **Focus targets** — deterministic entities extracted from the prompt: file paths (e.g. `src/auth/login.ts`), component/identifier names (e.g. `UserSession`, `AuthModule`), plus a workflow-specific focus description.
-- **Expected goal** — a concrete, workflow-aware statement of what the turn should accomplish.
-
-## Policy
-
-All execution policy lives in [`ay-pi.policy.json`](./ay-pi.policy.json). Each behavior/workflow combination maps to:
-
-- `provider` + `pool` — ordered model candidates (primary first)
-- `thinking` — reasoning level (`off`…`xhigh`)
-- `contextBudget` — `maxFiles` / `maxChars`
-- `constraints` — e.g. `code_only`, `no_code_output`, `suggest_only`, `scope_limited`
-- `allowedTools` — tool whitelist (e.g. `SUGGEST` policies expose only `read`, `grep`, `find`)
-- `output.maxTokens`
-
-A `diffLines` escalation rule bumps the thinking level up one step when uncommitted changes exceed `diffLinesEscalationThreshold` for the configured behaviors.
-
-### Constraints
-
-| Constraint | Effect |
-|------------|--------|
-| `code_only` | Return only a code block; no prose. |
-| `no_comments` | No inline comments in generated code. |
-| `no_refactor` | Change only the target lines; leave surroundings intact. |
-| `no_code_output` | Plan/analysis only; no code blocks. |
-| `suggest_only` | Advise only — do not write/apply code; optional reference snippets allowed. |
-| `scope_limited` | Work only with files in the current context. |
-
-## Extension Lifecycle
-
-AY-PI hooks into Pi's lifecycle:
-
-- `input` — guards against misplaced CLI commands (e.g. `pi update` typed into chat) and notifies the user.
-- `session_start` — announces the extension is active.
-- `before_agent_start` — the core routing pipeline: builds the signal, resolves behavior → workflow → policy → context strategy → adapter, then applies model selection, thinking level, tool restrictions, and injects the adapter system prompt.
-
-Registered commands:
-
-- `ay-pi-status` — show active policy metrics.
-- `ay-pi-reload-policy` — reload the policy file (clears the cache).
-
-## Telemetry & Debug
-
-A `DebugLogger` records every routing decision to `ay-pi.debug.log`, including rule-engine keyword scores, semantic-engine similarity scores, embedding load source/time, selected workflow, and applied policy. Each entry ends with the final behavior/workflow/policy and total routing time.
+| Behavior | Purpose |
+| --- | --- |
+| `CHAT` | Conversation, explanations, summaries, and teaching |
+| `PLAN` | Architecture, design, migration, and strategy |
+| `REVIEW` | Code, security, performance, and quality review |
+| `CODE` | Edit, fix, refactor, generate, and test |
+| `SUGGEST` | Options and trade-offs without applying changes |
 
 ## Development
 
 ```bash
 npm install
-npm run build:embeddings          # regenerate behavior embeddings (catalog.json)
-npm run build --prefix extension/ay-pi
-npx tsx dev-tools/cli.ts "/code /quick fix typo in login.ts"
+npm test
+npx tsc --noEmit
+npm run build
 ```
 
-Rebuild embeddings whenever the behavior catalog descriptions change (`scripts/build-embeddings.js`).
+`npm run build` regenerates semantic catalog embeddings and creates the npm extension bundle. The policy file is bundled as a runtime fallback, so the published package does not depend on a repository-root file.
 
-## Notes
+## Documentation
 
-- No routing LLM.
-- No vector database.
-- No network calls in routing (the embedding model runs locally via ONNX).
-- Sticky conversation continuity is preserved locally.
-- Workflow selection uses word-boundary keyword matching, not free-form regex intent.
+- [Architecture](docs/architecture.md)
+- [Routing and semantic engine](docs/routing.md)
+- [Plan state and model switching](docs/state-and-model-switch.md)
+- [Packaging, testing, and release](docs/operations.md)
+
+## Telemetry
+
+Debug output is written to `ay-pi.debug.log`; machine-readable routing records are written to `ay-pi.telemetry.jsonl`. These files may contain user input and should be reviewed before sharing.
 
 ## License
 
