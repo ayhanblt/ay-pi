@@ -43,6 +43,6 @@ Pi API reference: `node_modules/@earendil-works/pi-coding-agent/docs/` (extensio
 ## Open items
 
 - Real Pi smoke test of v2 (auto/manual, `/ay-pi add`, plan -> `/code`, Jev).
-- Optional `.github/workflows/publish.yml`: publish on `v*` tags with npm trusted publishing (OIDC); needs an up-to-date root package-lock.json.
+- `.github/workflows/publish.yml` publishes on `v*` tags (tag must equal `extension/ay-pi` version) via npm trusted publishing (OIDC). Still needed: configure the trusted publisher on npmjs.com (owner `ayhanblt`, repo `ay-pi`, workflow `publish.yml`).
 - Deprecate the old unscoped `ay-pi` npm package.
 - Pre-refactor WIP is kept in `git stash list` ("pre-refactor WIP (2026-10-26)").
