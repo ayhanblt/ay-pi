@@ -1,7 +1,7 @@
 {
   "name": "@ayhanblt/ay-pi",
-  "version": "1.1.1",
-  "description": "Deterministic, CPU-first model/thinking routing extension for Pi",
+  "version": "2.0.0",
+  "description": "Provider-agnostic tier routing for Pi: picks the kind of work, the tier, the tools and (in auto mode) the model for every prompt",
   "type": "module",
   "main": "./dist/index.js",
   "pi": {
@@ -12,9 +12,9 @@
   "keywords": [
     "pi-package",
     "pi-extension",
-    "behavior",
-    "workflow",
-    "model-routing"
+    "model-routing",
+    "virtual-model",
+    "jev"
   ],
   "license": "MIT",
   "repository": {
@@ -24,17 +24,12 @@
   },
   "files": [
     "dist",
-    "ay-pi.policy.json",
-    "package.json"
+    "README.md"
   ],
-  "dependencies": {
-    "@xenova/transformers": "^2.17.2",
-    "zod": "^4.4.3"
-  },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.3"
+    "@earendil-works/pi-coding-agent": ">=1.4.0"
   },
-  "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --tsconfig=../../tsconfig.json --external:@earendil-works/pi-coding-agent --external:@xenova/transformers --external:onnxruntime-node --external:sharp --outfile=dist/index.js"
+  "engines": {
+    "node": ">=22.19.0"
   }
 }
