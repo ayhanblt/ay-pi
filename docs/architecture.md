@@ -5,7 +5,7 @@ AY-PI is seven small files. Everything except `index.ts` is covered by unit test
 | File | Responsibility |
 | --- | --- |
 | `src/profiles.ts` | Behaviors, tiers, and the profile of each behavior (default tier, thinking level, write access, instruction text) |
-| `src/commands.ts` | Parses `/chat`, `/suggest`, `/review`, `/plan`, `/code` at the start of a prompt |
+| `src/commands.ts` | The `/chat`, `/suggest`, `/review`, `/plan`, `/code` commands and their behaviors |
 | `src/decide.ts` | The decision ladder: command → pending plan → classifier → safe default |
 | `src/classifier.ts` | Finds an available classifier model and turns its typed answers into a verdict |
 | `src/models.ts` | Tier → model resolution with fallback chains |
@@ -17,7 +17,7 @@ AY-PI is seven small files. Everything except `index.ts` is covered by unit test
 ```text
 user types "/plan add caching"
   │
-  ├─ input event            "/plan" is remembered, the prompt becomes "add caching"
+  ├─ /plan command          PLAN is remembered, "add caching" is sent as the prompt
   │
   ├─ before_agent_start     decide()  ──> PLAN · high · source=command
   │                         tools: edit/write/bash off

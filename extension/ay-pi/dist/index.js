@@ -28,7 +28,7 @@ var PROFILES = {
     tier: "high",
     thinking: "high",
     canWrite: false,
-    instructions: "Write a step-by-step plan. Do not write code or modify files. End by asking the user to approve the plan (they can reply with /code)."
+    instructions: "Write a step-by-step plan under a `## Plan` heading. Do not write code or modify files. End by asking the user to approve the plan (they can reply with /code). If the request is unclear, ask a clarifying question instead and do not write the heading."
   },
   CODE: {
     tier: "medium",
@@ -45,6 +45,10 @@ function shiftTier(tier, by) {
 }
 function isTier(value) {
   return TIERS.includes(value);
+}
+function extractPlan(answer) {
+  const start = answer.search(/^##\s+Plan\b/im);
+  return start === -1 ? void 0 : answer.slice(start).trim();
 }
 function behaviorInstructions(behavior) {
   return `AY-PI mode: ${behavior}.
@@ -166,20 +170,12 @@ async function classify(registry, model, prompt, pendingPlan, signal) {
 
 // src/commands.ts
 var COMMANDS = {
-  "/chat": "CHAT",
-  "/suggest": "SUGGEST",
-  "/review": "REVIEW",
-  "/plan": "PLAN",
-  "/code": "CODE"
+  chat: "CHAT",
+  suggest: "SUGGEST",
+  review: "REVIEW",
+  plan: "PLAN",
+  code: "CODE"
 };
-function parseCommand(text) {
-  const match = /^\s*(\/[a-z]+)(?:\s+([\s\S]*))?$/i.exec(text);
-  if (!match) return void 0;
-  const command = match[1].toLowerCase();
-  const behavior = COMMANDS[command];
-  if (!behavior) return void 0;
-  return { command, behavior, rest: (match[2] ?? "").trim() };
-}
 
 // src/config.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -279,10 +275,10 @@ var DECISION_ENTRY = "ay-pi.decision";
 function ayPi(pi) {
   let config = defaultConfig();
   let session = {};
-  let baselineTools = [];
   let command;
   let decision;
   let lastRouted;
+  let routed;
   let lastSuggestion;
   const userConfigPath = () => join(getAgentDir(), "ay-pi.json");
   function reloadConfig(ctx) {
@@ -316,10 +312,17 @@ function ayPi(pi) {
     return model;
   }
   function applyTools(behavior) {
-    const wanted = PROFILES[behavior].canWrite ? baselineTools : baselineTools.filter((tool) => !WRITE_TOOLS.has(tool));
     const current = pi.getActiveTools();
-    const same = wanted.length === current.length && wanted.every((tool) => current.includes(tool));
-    if (!same) pi.setActiveTools(wanted);
+    let wanted;
+    if (PROFILES[behavior].canWrite) {
+      wanted = [...current, ...(session.removedTools ?? []).filter((tool) => !current.includes(tool))];
+      session.removedTools = void 0;
+    } else {
+      const removed = current.filter((tool) => WRITE_TOOLS.has(tool));
+      session.removedTools = [.../* @__PURE__ */ new Set([...session.removedTools ?? [], ...removed])];
+      wanted = current.filter((tool) => !WRITE_TOOLS.has(tool));
+    }
+    if (wanted.length !== current.length) pi.setActiveTools(wanted);
   }
   function suggestInManualMode(ctx, current) {
     if (!hasAnyTierModel(config.tiers)) return;
@@ -336,9 +339,14 @@ function ayPi(pi) {
   }
   function showStatus(ctx) {
     const mode = isAuto(ctx) ? "auto" : "manual";
-    const tier = decision ? decision.tier : session.pinnedTier ?? "-";
     const pin = session.pinnedTier ? " (pinned)" : "";
-    ctx.ui.setStatus("ay-pi", `AY-PI ${decision?.behavior ?? "ready"} \xB7 ${tier}${pin} \xB7 ${mode}`);
+    if (!decision) {
+      ctx.ui.setStatus("ay-pi", `AY-PI ready \xB7 ${session.pinnedTier ?? "auto tier"}${pin} \xB7 ${mode}`);
+      return;
+    }
+    const tier = routed?.tier && routed.tier !== decision.tier ? `${decision.tier}\u2192${routed.tier}` : decision.tier;
+    const model = isAuto(ctx) && routed ? ` \xB7 ${routed.model}` : "";
+    ctx.ui.setStatus("ay-pi", `AY-PI ${decision.behavior} \xB7 ${tier}${pin} \xB7 ${mode}${model}`);
   }
   pi.registerVirtualModel({
     provider: VIRTUAL.provider,
@@ -357,32 +365,23 @@ function ayPi(pi) {
       const model = resolved?.model ?? fallbackModel(ctx, request.previous?.model);
       const ref = resolved?.ref ?? formatModelRef(model);
       lastRouted = ref;
+      if (request.reason !== "direct") {
+        routed = { tier: resolved?.tier, model: model.id };
+        showStatus(ctx);
+      }
       return { model, thinkingLevel, state: { tier: resolved?.tier ?? tier, model: ref } };
     }
   });
   pi.on("session_start", async (_event, ctx) => {
     reloadConfig(ctx);
-    baselineTools = pi.getActiveTools();
     const saved = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY);
     session = saved?.data ? { ...saved.data } : {};
     decision = void 0;
+    routed = void 0;
     showStatus(ctx);
     if (isAuto(ctx) && !hasAnyTierModel(config.tiers)) {
       ctx.ui.notify("AY-PI: no tier models configured yet. Add some with /ay-pi add low|medium|high.", "warning");
     }
-  });
-  pi.on("input", async (event, ctx) => {
-    if (event.source === "extension" || event.streamingBehavior) return { action: "continue" };
-    command = parseCommand(event.text);
-    if (!command) return { action: "continue" };
-    let text = command.rest;
-    if (!text && command.behavior === "CODE" && session.pendingPlan) text = "Implement the approved plan.";
-    if (!text) {
-      ctx.ui.notify(`AY-PI: write your request after ${command.command}.`, "warning");
-      command = void 0;
-      return { action: "handled" };
-    }
-    return { action: "transform", text, images: event.images };
   });
   pi.on("before_agent_start", async (event, ctx) => {
     if (event.messageType !== "user") return {};
@@ -394,7 +393,7 @@ function ayPi(pi) {
       if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, session.pendingPlan, ctx.signal);
     }
     decision = decide({
-      command: explicit?.behavior,
+      command: explicit,
       hasPendingPlan: Boolean(session.pendingPlan),
       verdict,
       pinnedTier: session.pinnedTier
@@ -406,6 +405,7 @@ function ayPi(pi) {
       ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
     }
     if (!isAuto(ctx)) suggestInManualMode(ctx, decision);
+    routed = void 0;
     showStatus(ctx);
     pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual" });
     saveState();
@@ -420,14 +420,29 @@ ${plan}`, display: false } : void 0
   });
   pi.on("agent_end", async (event) => {
     if (decision?.behavior !== "PLAN") return;
-    const lastAnswer = [...event.messages].reverse().filter((message) => message.role === "assistant").map(
+    const plan = [...event.messages].reverse().filter((message) => message.role === "assistant").map(
       (message) => typeof message.content === "string" ? message.content : (message.content ?? []).filter((part) => part?.type === "text").map((part) => part.text).join("\n")
-    ).find((text) => text.trim().length > 0);
-    if (lastAnswer) {
-      session.pendingPlan = lastAnswer;
+    ).map(extractPlan).find(Boolean);
+    if (plan) {
+      session.pendingPlan = plan;
       saveState();
     }
   });
+  for (const [name, behavior] of Object.entries(COMMANDS)) {
+    pi.registerCommand(name, {
+      description: `AY-PI: run this prompt as ${behavior}`,
+      handler: async (args, ctx) => {
+        if (!ctx.isIdle()) return ctx.ui.notify("AY-PI: wait for the current run to finish.", "warning");
+        let text = args.trim();
+        if (!text && behavior === "CODE" && session.pendingPlan) text = "Implement the approved plan.";
+        if (!text) return ctx.ui.notify(`AY-PI: write your request after /${name}.`, "warning");
+        command = behavior;
+        pi.sendUserMessage(text);
+        for (let i = 0; i < 50 && ctx.isIdle(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+        await ctx.waitForIdle();
+      }
+    });
+  }
   const SUBCOMMANDS = ["status", "auto", "manual", "tier", "add", "remove", "jev", "classifier", "reload"];
   pi.registerCommand("ay-pi", {
     description: "AY-PI: status, auto/manual mode, tier models, classifier (Jev)",
@@ -444,7 +459,7 @@ ${plan}`, display: false } : void 0
       return null;
     },
     handler: async (args, ctx) => {
-      const [sub = "status", arg = ""] = args.trim().split(/\s+/);
+      const [sub = "status", arg = ""] = args.trim().split(/\s+/).filter(Boolean);
       const notify = (message, type = "info") => ctx.ui.notify(message, type);
       switch (sub) {
         case "status": {

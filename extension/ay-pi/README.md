@@ -29,6 +29,58 @@ Requires Pi 1.4 or newer.
 
    You can add several models to a tier. They form a fallback chain: the first usable one wins.
 3. Turn on auto mode: `/ay-pi auto` (or select `ay-pi/auto` in `/model`).
+4. Optional but recommended: add **Jev** so you can skip the commands (see [Jev and other classifiers](#jev-and-other-classifiers)).
+
+## Usage examples
+
+The footer shows every decision as `AY-PI <behavior> · <tier> · <mode>`, plus the model that answered in auto mode. Before the first prompt it reads `AY-PI ready · auto tier · <mode>`. `/ay-pi` shows the same and more.
+
+The examples use these tiers:
+
+```json
+{ "low": ["openai-codex/gpt-6-luna"], "medium": ["openai-codex/gpt-6.1-sol"], "high": ["openai-codex/gpt-6-astra"] }
+```
+
+### Pick the behavior with a command (auto mode)
+
+| You type | Footer | What happens |
+| --- | --- | --- |
+| `/chat what is 2+2?` | `CHAT · low · auto · gpt-6-luna` | A quick answer from the cheap model |
+| `/review math.js` | `REVIEW · medium · auto · gpt-6.1-sol` | Findings, no file changes |
+| `/plan fix add() in math.js and add a test` | `PLAN · high · auto · gpt-6-astra` | A `## Plan`, no file changes |
+| `how does math.js work?` | `CHAT · medium · auto · gpt-6.1-sol` | No command and no classifier: the safe default, read-only |
+
+### Plan, then code
+
+```text
+/plan fix add() in math.js and add a test     → PLAN · high, the plan is kept
+what are the risks of this plan?              → CHAT · medium, read-only;
+                                                 "a plan is waiting. Reply /code to implement it"
+/code                                         → CODE · medium, the plan is implemented
+```
+
+`/code` with text (`/code also update the README`) implements the plan with your extra note. If the model answers `/plan` with a question instead of a plan, the earlier plan stays pending.
+
+### Pin a tier
+
+```text
+/ay-pi tier high      → every prompt uses high: /chat hello → CHAT · high (pinned)
+/ay-pi tier auto      → the behavior decides the tier again
+```
+
+### Fallback
+
+If a tier is empty or its models are not usable, the neighbouring tier answers. With an empty `low` tier, `/chat hello` shows `CHAT · low→medium · auto · gpt-6.1-sol`. If a request fails, it is retried on the next model of the chain.
+
+### Manual mode
+
+```text
+/ay-pi manual           → back to the last model auto mode used
+/plan refactor config   → PLAN · high · manual, and a hint:
+                          "AY-PI suggests the high tier (openai-codex/gpt-6-astra) for this PLAN request."
+```
+
+Your model is kept. AY-PI still turns off the file tools for read-only behaviors and adds the behavior instructions.
 
 ## Behaviors
 
@@ -46,8 +98,8 @@ Requires Pi 1.4 or newer.
 
 AY-PI walks down this ladder and stops at the first rung that applies:
 
-1. **Explicit command.** `/chat`, `/suggest`, `/review`, `/plan` or `/code` at the start of the prompt. No model is called.
-2. **Pending plan.** After a `PLAN` turn, the plan is kept. `/code` (alone or with text) implements it. With a classifier, a message like "looks good, go ahead" also counts as approval.
+1. **Explicit command.** `/chat`, `/suggest`, `/review`, `/plan` or `/code` before the prompt (they show up in `/` autocomplete). No model is called.
+2. **Pending plan.** After a `PLAN` turn, the plan (its `## Plan` section) is kept. A clarifying question is not a plan and does not replace one. `/code` (alone or with text) implements it. With a classifier, a message like "looks good, go ahead" also counts as approval.
 3. **Classifier (optional).** If a classifier such as Jev is available, AY-PI asks it three typed questions: what kind of task is this, does the user want files changed now, and how hard is it. Hard tasks move one tier up, trivial ones one tier down.
 4. **Safe default.** If nothing above applies: `CHAT`, medium tier, read-only.
 
@@ -62,12 +114,40 @@ Pin the tier for the session with `/ay-pi tier high` (or `low`, `medium`), and g
 
 ## Jev and other classifiers
 
-Without a classifier, AY-PI uses only explicit commands and the safe default. To let a classifier decide:
+Without a classifier, AY-PI only knows what you tell it with a command; every other prompt gets the safe default (`CHAT`, medium, read-only). With a classifier such as **Jev**, you can just type, and AY-PI picks the behavior and the tier for you. Jev is a small, fast classification model, so a decision costs a fraction of a cent and adds little latency.
 
-- run `/login`, choose **TypeSafe** and paste your API key, or
-- set `TYPESAFE_API_KEY`.
+### Set up Jev
 
-Other classifier sources Pi supports work too (OpenRouter, OpenCode, Cloudflare Workers AI, OpenAI, llama.cpp). Check what AY-PI sees with `/ay-pi jev`.
+1. Run `/login`, choose **TypeSafe** and paste your API key (or set `TYPESAFE_API_KEY`).
+2. Check it with `/ay-pi jev`: it shows the classifier AY-PI uses. `/ay-pi` shows it on the `Classifier:` line.
+
+`classifier` in `ay-pi.json` is `auto` by default: the first available Jev model, else any other classifier Pi offers (OpenRouter, OpenCode, Cloudflare Workers AI, OpenAI, llama.cpp). Choose one with `/ay-pi classifier provider/model`, or turn it off with `/ay-pi classifier off`.
+
+### What Jev is asked
+
+For every prompt without a command, AY-PI asks three typed questions:
+
+- **task**: is this `CHAT`, `SUGGEST`, `REVIEW`, `PLAN` or `CODE`?
+- **file changes**: does the user want files changed now?
+- **complexity**: trivial, ordinary or hard? Trivial work moves one tier down, hard work one tier up.
+
+While a plan is pending, it also asks whether the message approves the plan.
+
+`CODE` needs at least 80% on "file changes"; below that the turn runs as `SUGGEST`. A task answer under 50% is ignored and the safe default is used.
+
+### Examples (no commands typed)
+
+| You type | Decision |
+| --- | --- |
+| `what does math.js do?` | `CHAT · low` (trivial question) |
+| `which improvements would you suggest for this code?` | `SUGGEST · medium` |
+| `review math.js, is there a bug?` | `REVIEW · medium` |
+| `plan adding a multiply function, don't write code yet` | `PLAN · high`, the plan is kept |
+| `ok, go ahead` (plan pending) | `CODE · medium`, the plan is implemented |
+| `add a subtract function to math.js` | `CODE · medium` |
+| `what are the architectural implications of moving to a monorepo? dig deep` | `CHAT · medium` (hard question, one tier up) |
+
+Commands still win: `/plan`, `/code` and the others skip the classifier. Each decision, with the classifier's answers, is stored in the session as an `ay-pi.decision` entry.
 
 ## Commands
 
