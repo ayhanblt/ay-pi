@@ -2,10 +2,10 @@
  * AY-PI — Pi extension entry point.
  *
  * Per user prompt:
- *   input               strip a leading /plan, /code, ... and remember it
+ *   /plan, /code, ...   remember the behavior and send the prompt
  *   before_agent_start  decide behavior + tier, scope tools, add instructions
  *   route (ay-pi/auto)  auto mode: pick the model for the tier
- *   agent_end           remember a PLAN answer as the pending plan
+ *   agent_end           remember the `## Plan` of a PLAN answer as the pending plan
  *
  * Auto mode = the selected model is the virtual model `ay-pi/auto`.
  * Manual mode = any other model; AY-PI only suggests a tier/model.
@@ -14,11 +14,11 @@
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { classify, findClassifier, listClassifiers } from "./classifier.js";
-import { parseCommand, type ParsedCommand } from "./commands.js";
+import { COMMANDS } from "./commands.js";
 import { defaultConfig, loadConfig, updateUserConfig, type AyPiConfig } from "./config.js";
 import { decide, type Decision } from "./decide.js";
 import { formatModelRef, hasAnyTierModel, parseModelRef, resolveTierModel, type ModelRef } from "./models.js";
-import { PROFILES, SAFE_DEFAULT, TIERS, WRITE_TOOLS, behaviorInstructions, isTier, type Tier } from "./profiles.js";
+import { PROFILES, SAFE_DEFAULT, TIERS, WRITE_TOOLS, behaviorInstructions, extractPlan, isTier, type Behavior, type Tier } from "./profiles.js";
 
 const VIRTUAL: ModelRef = { provider: "ay-pi", id: "auto" };
 const STATE_ENTRY = "ay-pi.state";
@@ -27,6 +27,8 @@ const DECISION_ENTRY = "ay-pi.decision";
 interface SessionState {
   pendingPlan?: string;
   pinnedTier?: Tier;
+  /** Write tools AY-PI switched off for read-only turns; restored for CODE. */
+  removedTools?: string[];
 }
 
 interface RouteState {
@@ -39,10 +41,10 @@ type Model = NonNullable<ExtensionContext["model"]>;
 export default function ayPi(pi: ExtensionAPI) {
   let config: AyPiConfig = defaultConfig();
   let session: SessionState = {};
-  let baselineTools: string[] = [];
-  let command: ParsedCommand | undefined;
+  let command: Behavior | undefined; // set by /chat ... /code for the prompt they send
   let decision: Decision | undefined;
   let lastRouted: string | undefined;
+  let routed: { tier?: Tier; model: string } | undefined; // what auto mode used for the current decision
   let lastSuggestion: string | undefined;
 
   const userConfigPath = () => join(getAgentDir(), "ay-pi.json");
@@ -85,11 +87,19 @@ export default function ayPi(pi: ExtensionAPI) {
     return model;
   }
 
+  // Pi restores the active tools with the session, so remember what we switched off instead of a baseline.
   function applyTools(behavior: Decision["behavior"]): void {
-    const wanted = PROFILES[behavior].canWrite ? baselineTools : baselineTools.filter((tool) => !WRITE_TOOLS.has(tool));
     const current = pi.getActiveTools();
-    const same = wanted.length === current.length && wanted.every((tool) => current.includes(tool));
-    if (!same) pi.setActiveTools(wanted); // only on change: the tool list is part of the cached prefix
+    let wanted: string[];
+    if (PROFILES[behavior].canWrite) {
+      wanted = [...current, ...(session.removedTools ?? []).filter((tool) => !current.includes(tool))];
+      session.removedTools = undefined;
+    } else {
+      const removed = current.filter((tool) => WRITE_TOOLS.has(tool));
+      session.removedTools = [...new Set([...(session.removedTools ?? []), ...removed])];
+      wanted = current.filter((tool) => !WRITE_TOOLS.has(tool));
+    }
+    if (wanted.length !== current.length) pi.setActiveTools(wanted); // only on change: the tool list is part of the cached prefix
   }
 
   function suggestInManualMode(ctx: ExtensionContext, current: Decision): void {
@@ -109,9 +119,15 @@ export default function ayPi(pi: ExtensionAPI) {
 
   function showStatus(ctx: ExtensionContext): void {
     const mode = isAuto(ctx) ? "auto" : "manual";
-    const tier = decision ? decision.tier : session.pinnedTier ?? "-";
     const pin = session.pinnedTier ? " (pinned)" : "";
-    ctx.ui.setStatus("ay-pi", `AY-PI ${decision?.behavior ?? "ready"} · ${tier}${pin} · ${mode}`);
+    if (!decision) {
+      ctx.ui.setStatus("ay-pi", `AY-PI ready · ${session.pinnedTier ?? "auto tier"}${pin} · ${mode}`);
+      return;
+    }
+    // Show a fallback as "low→medium" and, in auto mode, the model that actually answered.
+    const tier = routed?.tier && routed.tier !== decision.tier ? `${decision.tier}→${routed.tier}` : decision.tier;
+    const model = isAuto(ctx) && routed ? ` · ${routed.model}` : "";
+    ctx.ui.setStatus("ay-pi", `AY-PI ${decision.behavior} · ${tier}${pin} · ${mode}${model}`);
   }
 
   // ---------------------------------------------------------------- virtual model
@@ -140,6 +156,10 @@ export default function ayPi(pi: ExtensionAPI) {
       const model = resolved?.model ?? fallbackModel(ctx, request.previous?.model);
       const ref = resolved?.ref ?? formatModelRef(model);
       lastRouted = ref;
+      if (request.reason !== "direct") {
+        routed = { tier: resolved?.tier, model: model.id };
+        showStatus(ctx);
+      }
       return { model, thinkingLevel, state: { tier: resolved?.tier ?? tier, model: ref } };
     },
   });
@@ -148,32 +168,16 @@ export default function ayPi(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     reloadConfig(ctx);
-    baselineTools = pi.getActiveTools();
     const saved = [...ctx.sessionManager.getBranch()]
       .reverse()
       .find((entry: any) => entry.type === "custom" && entry.customType === STATE_ENTRY) as any;
     session = saved?.data ? { ...saved.data } : {};
     decision = undefined;
+    routed = undefined;
     showStatus(ctx);
     if (isAuto(ctx) && !hasAnyTierModel(config.tiers)) {
       ctx.ui.notify("AY-PI: no tier models configured yet. Add some with /ay-pi add low|medium|high.", "warning");
     }
-  });
-
-  pi.on("input", async (event, ctx) => {
-    // Steering/follow-up messages during a run do not start a new decision.
-    if (event.source === "extension" || event.streamingBehavior) return { action: "continue" };
-    command = parseCommand(event.text);
-    if (!command) return { action: "continue" };
-
-    let text = command.rest;
-    if (!text && command.behavior === "CODE" && session.pendingPlan) text = "Implement the approved plan.";
-    if (!text) {
-      ctx.ui.notify(`AY-PI: write your request after ${command.command}.`, "warning");
-      command = undefined;
-      return { action: "handled" };
-    }
-    return { action: "transform", text, images: event.images };
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -188,7 +192,7 @@ export default function ayPi(pi: ExtensionAPI) {
     }
 
     decision = decide({
-      command: explicit?.behavior,
+      command: explicit,
       hasPendingPlan: Boolean(session.pendingPlan),
       verdict,
       pinnedTier: session.pinnedTier,
@@ -201,6 +205,7 @@ export default function ayPi(pi: ExtensionAPI) {
       ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
     }
     if (!isAuto(ctx)) suggestInManualMode(ctx, decision);
+    routed = undefined;
     showStatus(ctx);
     pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual" });
     saveState();
@@ -215,7 +220,7 @@ export default function ayPi(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event) => {
     if (decision?.behavior !== "PLAN") return;
-    const lastAnswer = [...event.messages]
+    const plan = [...event.messages]
       .reverse()
       .filter((message: any) => message.role === "assistant")
       .map((message: any) =>
@@ -223,12 +228,33 @@ export default function ayPi(pi: ExtensionAPI) {
           ? message.content
           : (message.content ?? []).filter((part: any) => part?.type === "text").map((part: any) => part.text).join("\n"),
       )
-      .find((text: string) => text.trim().length > 0);
-    if (lastAnswer) {
-      session.pendingPlan = lastAnswer;
+      .map(extractPlan)
+      .find(Boolean);
+    if (plan) {
+      session.pendingPlan = plan;
       saveState();
     }
   });
+
+  // ---------------------------------------------------------------- /chat /suggest /review /plan /code
+
+  // Registered so Pi's autocomplete offers them; unregistered, Enter picks a fuzzy match instead.
+  for (const [name, behavior] of Object.entries(COMMANDS)) {
+    pi.registerCommand(name, {
+      description: `AY-PI: run this prompt as ${behavior}`,
+      handler: async (args, ctx) => {
+        if (!ctx.isIdle()) return ctx.ui.notify("AY-PI: wait for the current run to finish.", "warning");
+        let text = args.trim();
+        if (!text && behavior === "CODE" && session.pendingPlan) text = "Implement the approved plan.";
+        if (!text) return ctx.ui.notify(`AY-PI: write your request after /${name}.`, "warning");
+        command = behavior;
+        pi.sendUserMessage(text);
+        // Print mode exits when the command returns: wait (briefly) for the run to start, then for it to end.
+        for (let i = 0; i < 50 && ctx.isIdle(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+        await ctx.waitForIdle();
+      },
+    });
+  }
 
   // ---------------------------------------------------------------- /ay-pi command
 
@@ -249,7 +275,7 @@ export default function ayPi(pi: ExtensionAPI) {
       return null;
     },
     handler: async (args, ctx) => {
-      const [sub = "status", arg = ""] = args.trim().split(/\s+/);
+      const [sub = "status", arg = ""] = args.trim().split(/\s+/).filter(Boolean);
       const notify = (message: string, type: "info" | "warning" | "error" = "info") => ctx.ui.notify(message, type);
 
       switch (sub) {

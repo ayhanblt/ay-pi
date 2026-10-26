@@ -15,12 +15,12 @@ pi install ./extension/ay-pi   # local smoke test in a real Pi
 ## Layout
 
 - `src/profiles.ts` behaviors, tiers, profile per behavior (tier, thinking, canWrite, instructions)
-- `src/commands.ts` `/chat /suggest /review /plan /code` prefix parsing
+- `src/commands.ts` `/chat /suggest /review /plan /code` command -> behavior map (registered as Pi commands)
 - `src/decide.ts` decision ladder: command -> pending plan -> classifier -> safe default
 - `src/classifier.ts` Jev / Pi classifier models via `ctx.modelRegistry.classify()`
 - `src/models.ts` tier -> model fallback chains
 - `src/config.ts` `~/.pi/agent/ay-pi.json` (+ trusted project `.pi/ay-pi.json`)
-- `src/index.ts` Pi wiring: input, before_agent_start, agent_end, virtual model, `/ay-pi` command
+- `src/index.ts` Pi wiring: behavior commands, before_agent_start, agent_end, virtual model, `/ay-pi` command
 
 Pi API reference: `node_modules/@earendil-works/pi-coding-agent/docs/` (extensions.md, virtual-models.md, models.md) and `examples/extensions/jev-router.ts`.
 
@@ -42,7 +42,6 @@ Pi API reference: `node_modules/@earendil-works/pi-coding-agent/docs/` (extensio
 
 ## Open items
 
-- Real Pi smoke test of v2 (auto/manual, `/ay-pi add`, plan -> `/code`, Jev).
 - `.github/workflows/publish.yml` publishes on `v*` tags (tag must equal `extension/ay-pi` version) via npm trusted publishing (OIDC). Still needed: configure the trusted publisher on npmjs.com (owner `ayhanblt`, repo `ay-pi`, workflow `publish.yml`).
 - Deprecate the old unscoped `ay-pi` npm package.
 - Pre-refactor WIP is kept in `git stash list` ("pre-refactor WIP (2026-10-26)").
