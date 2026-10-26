@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/* --outfile=extension/ay-pi/dist/index.js && cp README.md extension/ay-pi/README.md"
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/* --outfile=extension/ay-pi/dist/index.js && sed 's#src=\"docs/assets/#src=\"https://raw.githubusercontent.com/ayhanblt/ay-pi/main/docs/assets/#; s#](docs/#](https://github.com/ayhanblt/ay-pi/blob/main/docs/#' README.md > extension/ay-pi/README.md"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
