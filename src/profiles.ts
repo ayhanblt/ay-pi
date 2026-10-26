@@ -46,8 +46,9 @@ export const PROFILES: Record<Behavior, Profile> = {
     thinking: "high",
     canWrite: false,
     instructions:
-      "Write a step-by-step plan. Do not write code or modify files. " +
-      "End by asking the user to approve the plan (they can reply with /code).",
+      "Write a step-by-step plan under a `## Plan` heading. Do not write code or modify files. " +
+      "End by asking the user to approve the plan (they can reply with /code). " +
+      "If the request is unclear, ask a clarifying question instead and do not write the heading.",
   },
   CODE: {
     tier: "medium",
@@ -70,6 +71,15 @@ export function shiftTier(tier: Tier, by: number): Tier {
 
 export function isTier(value: string): value is Tier {
   return (TIERS as readonly string[]).includes(value);
+}
+
+/**
+ * The plan in a PLAN answer: everything from its `## Plan` heading on.
+ * Answers without the heading (a clarifying question, say) are not plans.
+ */
+export function extractPlan(answer: string): string | undefined {
+  const start = answer.search(/^##\s+Plan\b/im);
+  return start === -1 ? undefined : answer.slice(start).trim();
 }
 
 /** The static block appended to the system prompt. Depends only on the behavior, so it stays cache-stable. */
