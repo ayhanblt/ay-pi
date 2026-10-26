@@ -38,6 +38,7 @@ Pi API reference: `node_modules/@earendil-works/pi-coding-agent/docs/` (extensio
 
 - Discuss and agree on a plan before writing code. "Geliştirme yapma" means analysis/plan only.
 - Present code changes as diffs, not full files.
+- No Claude attribution: no `Co-Authored-By` trailer in commits, no "Generated with Claude Code" in PRs.
 - Do not commit or push unless asked. Tests (`*.test.ts`) and `graphify-out/` are not committed.
 
 ## Open items
