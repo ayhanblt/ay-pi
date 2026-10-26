@@ -1,47 +1,21 @@
 {
-  "name": "@ayhanblt/ay-pi",
-  "version": "1.1.1",
+  "name": "ay-pi-workspace",
+  "version": "2.0.0",
   "private": true,
-  "description": "Deterministic, CPU-first model/thinking routing extension for Pi",
   "type": "module",
-  "main": "./dist/index.js",
-  "pi": {
-    "extensions": [
-      "./dist/index.js"
-    ]
-  },
-  "keywords": [
-    "pi-package",
-    "pi-extension",
-    "behavior",
-    "workflow",
-    "model-routing"
-  ],
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ayhanblt/ay-pi.git",
-    "directory": "extension/ay-pi"
-  },
-  "files": [
-    "dist",
-    "ay-pi.policy.json",
-    "package.json"
-  ],
-  "dependencies": {
-    "@xenova/transformers": "^2.17.2",
-    "zod": "^4.4.3"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.3"
-  },
   "scripts": {
-    "build:embeddings": "node scripts/build-embeddings.js",
+    "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
-    "build": "npm run build:embeddings && npx esbuild extension/ay-pi/src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/pi-coding-agent --external:@xenova/transformers --external:onnxruntime-node --external:sharp --outfile=extension/ay-pi/dist/index.js"
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@earendil-works/* --outfile=extension/ay-pi/dist/index.js && cp README.md extension/ay-pi/README.md"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.2",
     "typescript": "~5.7"
+  },
+  "engines": {
+    "node": ">=22.19.0"
   }
 }
