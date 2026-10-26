@@ -1,0 +1,23 @@
+name: Publish
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  id-token: write        # npm trusted publishing (OIDC), no NPM_TOKEN
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24   # ships npm 11 (trusted publishing needs >= 11.5.1)
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Tag must match package version
+        run: test "v$(node -p "require('./extension/ay-pi/package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm publish --access public
+        working-directory: extension/ay-pi
