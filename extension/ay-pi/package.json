@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "pi": {
+    "image": "https://raw.githubusercontent.com/ayhanblt/ay-pi/main/docs/assets/demo.gif",
     "extensions": [
       "./dist/index.js"
     ]
@@ -27,7 +28,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=1.4.0"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "engines": {
     "node": ">=22.19.0"
