@@ -150,6 +150,18 @@ While a plan is pending, it also asks whether the message approves the plan.
 
 To keep your files safe, `CODE` needs at least 80% on "file changes"; below that the turn runs as `SUGGEST`. A task answer under 50% is ignored and the safe default is used.
 
+Real verdicts from a test session (the prompts were typed in Turkish; complexity runs from 0 = trivial to 2 = hard):
+
+| Prompt | Decision | Jev's answers |
+| --- | --- | --- |
+| `math.js ne işe yarıyor?` (what does math.js do?) | `CHAT · low` | CHAT 100% · file changes 2% · complexity 0.18 |
+| `bu kodda hangi iyileştirmeleri önerirsin?` (which improvements would you suggest?) | `SUGGEST · medium` | SUGGEST 95% · file changes 7% · complexity 0.94 |
+| `math.js'i gözden geçir, hata var mı?` (review math.js, any bugs?) | `REVIEW · medium` | REVIEW 100% · file changes 11% · complexity 0.85 |
+| plan adding a multiply function | `PLAN · high`, plan kept | PLAN 100% · file changes 7% · complexity 0.76 |
+| `tamam, uygula` (ok, go ahead) while the plan is pending | `CODE · medium`, plan approved | approves the plan 95% |
+| `math.js'e subtract fonksiyonu ekle` (add a subtract function) | `CODE · medium` | CODE 100% · file changes 83% (≥ 80%) |
+| a deep question about monorepo architecture | `CHAT · medium` | CHAT 96% · file changes 4% · complexity 1.96, so one tier up |
+
 `classifier` is `auto` by default: the first available Jev model, else any other classifier Pi offers (OpenRouter, OpenCode, Cloudflare Workers AI, OpenAI, llama.cpp). Pick one with `/ay-pi classifier provider/model`, or turn it off with `/ay-pi classifier off`.
 
 </details>
