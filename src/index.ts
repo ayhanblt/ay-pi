@@ -18,7 +18,7 @@ import { COMMANDS } from "./commands.js";
 import { defaultConfig, loadConfig, updateUserConfig, type AyPiConfig } from "./config.js";
 import { decide, type Decision } from "./decide.js";
 import { formatModelRef, hasAnyTierModel, parseModelRef, resolveTierModel, type ModelRef } from "./models.js";
-import { PROFILES, SAFE_DEFAULT, TIERS, WRITE_TOOLS, behaviorInstructions, extractPlan, isTier, type Behavior, type Tier } from "./profiles.js";
+import { PROFILES, SAFE_DEFAULT, TIERS, WRITE_TOOLS, behaviorInstructions, extractPlan, isTier, readOnlyAllows, type Behavior, type Tier } from "./profiles.js";
 
 const VIRTUAL: ModelRef = { provider: "ay-pi", id: "auto" };
 const STATE_ENTRY = "ay-pi.state";
@@ -188,7 +188,7 @@ export default function ayPi(pi: ExtensionAPI) {
     let verdict;
     if (!explicit) {
       const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
-      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, session.pendingPlan, ctx.signal);
+      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, Boolean(session.pendingPlan), ctx.signal);
     }
 
     decision = decide({
@@ -201,6 +201,9 @@ export default function ayPi(pi: ExtensionAPI) {
     if (plan) session.pendingPlan = undefined;
 
     applyTools(decision.behavior);
+    if (decision.source === "plan") {
+      ctx.ui.notify("AY-PI: plan approved, implementing it now (write tools on).", "info");
+    }
     if (decision.source === "default" && session.pendingPlan) {
       ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
     }
@@ -216,6 +219,16 @@ export default function ayPi(pi: ExtensionAPI) {
         ? { customType: "ay-pi.plan", content: `Approved plan. Implement it; do not re-plan.\n\n${plan}`, display: false }
         : undefined,
     };
+  });
+
+  // Removing write tools only hides them from the model; extension and MCP tools stay callable
+  // (directly or through codemode). Every call, nested ones included, passes here.
+  pi.on("tool_call", async (event) => {
+    const behavior = (decision ?? SAFE_DEFAULT).behavior;
+    if (PROFILES[behavior].canWrite) return;
+    const tool = pi.getAllTools().find((info) => info.name === event.toolName);
+    if (readOnlyAllows(event.toolName, tool)) return;
+    return { block: true, reason: `AY-PI: this is a read-only ${behavior} turn, so ${event.toolName} is blocked. Ask the user to reply with /code to make changes.` };
   });
 
   pi.on("agent_end", async (event) => {

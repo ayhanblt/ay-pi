@@ -16,7 +16,6 @@ export type ClassifierModel = Parameters<Registry["classify"]>[0];
 type ClassifierContext = Parameters<Registry["classify"]>[1];
 
 const MAX_PROMPT_CHARS = 16_000;
-const MAX_PLAN_CHARS = 4_000;
 
 /** Resolves the configured classifier to an available model, or undefined. */
 export async function findClassifier(registry: Registry, setting: string): Promise<ClassifierModel | undefined> {
@@ -42,7 +41,11 @@ const TASK_CRITERIA: Record<Behavior, string> = {
   CODE: "Wants files changed: implement, fix, refactor, or write tests",
 };
 
-export function buildQuestions(prompt: string, pendingPlan?: string): ClassifierContext {
+/**
+ * The classifier only ever sees the user's message. The pending plan is model output that may
+ * carry text from files the model read, so it is never shown to the approval question.
+ */
+export function buildQuestions(prompt: string, hasPendingPlan = false): ClassifierContext {
   const state: Record<string, string> = { message: prompt.slice(0, MAX_PROMPT_CHARS) };
   const questions: ClassifierContext["questions"] = {
     task: {
@@ -61,11 +64,11 @@ export function buildQuestions(prompt: string, pendingPlan?: string): Classifier
       criteria: ["Trivial or quick", "Ordinary feature, fix, review or question", "Hard: subtle design, cross-cutting change or deep debugging"],
     },
   };
-  if (pendingPlan) {
-    state.pendingPlan = pendingPlan.slice(0, MAX_PLAN_CHARS);
+  if (hasPendingPlan) {
     questions.approvesPlan = {
       type: "bool",
-      instructions: "The assistant proposed `pendingPlan` last turn. Does `message` approve it and ask to implement it now?",
+      instructions:
+        "Last turn the assistant proposed a plan and asked the user to approve it. Does `message` approve that plan and ask to implement it now?",
       criteria: { true: "Approves and asks to implement", false: "Does not approve, asks for changes, or talks about something else" },
     };
   }
@@ -94,11 +97,11 @@ export async function classify(
   registry: Registry,
   model: ClassifierModel,
   prompt: string,
-  pendingPlan: string | undefined,
+  hasPendingPlan: boolean,
   signal?: AbortSignal,
 ): Promise<ClassifierVerdict | undefined> {
   try {
-    const result = await registry.classify(model, buildQuestions(prompt, pendingPlan), { signal });
+    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan), { signal });
     return result.stopReason === "stop" ? toVerdict(result.answers) : undefined;
   } catch {
     return undefined;

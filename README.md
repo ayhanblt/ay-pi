@@ -11,7 +11,7 @@
 AY-PI is an extension for the [Pi coding agent](https://github.com/earendil-works/pi). Before every prompt it decides what kind of work you are asking for, and then:
 
 - 🧭 **picks the tier:** a quick question gets a cheap model, a plan gets your strongest one;
-- 🔒 **scopes the tools:** only coding turns can edit files or run commands;
+- 🔒 **scopes the tools:** only coding turns can edit files or run commands (extension and MCP tools too, unless they declare themselves read-only);
 - 🤖 **picks the model** in auto mode, or just suggests one in manual mode.
 
 ```text

@@ -39,6 +39,12 @@ var PROFILES = {
 };
 var SAFE_DEFAULT = { behavior: "CHAT", tier: "medium" };
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
+var READ_TOOLS = /* @__PURE__ */ new Set(["read", "grep", "find", "ls"]);
+function readOnlyAllows(name, tool) {
+  if (WRITE_TOOLS.has(name)) return false;
+  if (READ_TOOLS.has(name)) return true;
+  return tool?.annotations?.readOnlyHint === true || tool?.reachesTools !== void 0;
+}
 function shiftTier(tier, by) {
   const index = Math.min(Math.max(TIERS.indexOf(tier) + by, 0), TIERS.length - 1);
   return TIERS[index];
@@ -96,7 +102,6 @@ function hasAnyTierModel(tiers) {
 
 // src/classifier.ts
 var MAX_PROMPT_CHARS = 16e3;
-var MAX_PLAN_CHARS = 4e3;
 async function findClassifier(registry, setting) {
   if (setting === "off") return void 0;
   const available = await registry.getAvailableOfType("classifier");
@@ -117,7 +122,7 @@ var TASK_CRITERIA = {
   PLAN: "Wants work designed or planned before anything is implemented",
   CODE: "Wants files changed: implement, fix, refactor, or write tests"
 };
-function buildQuestions(prompt, pendingPlan) {
+function buildQuestions(prompt, hasPendingPlan = false) {
   const state = { message: prompt.slice(0, MAX_PROMPT_CHARS) };
   const questions = {
     task: {
@@ -136,11 +141,10 @@ function buildQuestions(prompt, pendingPlan) {
       criteria: ["Trivial or quick", "Ordinary feature, fix, review or question", "Hard: subtle design, cross-cutting change or deep debugging"]
     }
   };
-  if (pendingPlan) {
-    state.pendingPlan = pendingPlan.slice(0, MAX_PLAN_CHARS);
+  if (hasPendingPlan) {
     questions.approvesPlan = {
       type: "bool",
-      instructions: "The assistant proposed `pendingPlan` last turn. Does `message` approve it and ask to implement it now?",
+      instructions: "Last turn the assistant proposed a plan and asked the user to approve it. Does `message` approve that plan and ask to implement it now?",
       criteria: { true: "Approves and asks to implement", false: "Does not approve, asks for changes, or talks about something else" }
     };
   }
@@ -159,9 +163,9 @@ function toVerdict(answers) {
     approvesPlan: approvesPlan?.type === "bool" ? approvesPlan.probability : void 0
   };
 }
-async function classify(registry, model, prompt, pendingPlan, signal) {
+async function classify(registry, model, prompt, hasPendingPlan, signal) {
   try {
-    const result = await registry.classify(model, buildQuestions(prompt, pendingPlan), { signal });
+    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan), { signal });
     return result.stopReason === "stop" ? toVerdict(result.answers) : void 0;
   } catch {
     return void 0;
@@ -390,7 +394,7 @@ function ayPi(pi) {
     let verdict;
     if (!explicit) {
       const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
-      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, session.pendingPlan, ctx.signal);
+      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, Boolean(session.pendingPlan), ctx.signal);
     }
     decision = decide({
       command: explicit,
@@ -401,6 +405,9 @@ function ayPi(pi) {
     const plan = decision.usePlan ? session.pendingPlan : void 0;
     if (plan) session.pendingPlan = void 0;
     applyTools(decision.behavior);
+    if (decision.source === "plan") {
+      ctx.ui.notify("AY-PI: plan approved, implementing it now (write tools on).", "info");
+    }
     if (decision.source === "default" && session.pendingPlan) {
       ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
     }
@@ -417,6 +424,13 @@ ${behaviorInstructions(decision.behavior)}`,
 
 ${plan}`, display: false } : void 0
     };
+  });
+  pi.on("tool_call", async (event) => {
+    const behavior = (decision ?? SAFE_DEFAULT).behavior;
+    if (PROFILES[behavior].canWrite) return;
+    const tool = pi.getAllTools().find((info) => info.name === event.toolName);
+    if (readOnlyAllows(event.toolName, tool)) return;
+    return { block: true, reason: `AY-PI: this is a read-only ${behavior} turn, so ${event.toolName} is blocked. Ask the user to reply with /code to make changes.` };
   });
   pi.on("agent_end", async (event) => {
     if (decision?.behavior !== "PLAN") return;

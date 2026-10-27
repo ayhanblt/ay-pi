@@ -64,6 +64,26 @@ export const SAFE_DEFAULT = { behavior: "CHAT", tier: "medium" } as const satisf
 /** Tools that can change the workspace. Read-only behaviors run without them. */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write", "bash", "powershell"]);
 
+/** Pi's built-in tools that only read. */
+export const READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
+
+/** What a read-only turn needs to know about a tool (a subset of Pi's ToolInfo). */
+export interface ToolTraits {
+  annotations?: { readOnlyHint?: boolean };
+  reachesTools?: unknown;
+}
+
+/**
+ * Whether a read-only turn may call this tool. Extension and MCP tools pass only when they
+ * declare `readOnlyHint`. Tools that run other tools (codemode, tool_search) pass, because
+ * each call they make is checked again. Unknown tools are blocked.
+ */
+export function readOnlyAllows(name: string, tool: ToolTraits | undefined): boolean {
+  if (WRITE_TOOLS.has(name)) return false;
+  if (READ_TOOLS.has(name)) return true;
+  return tool?.annotations?.readOnlyHint === true || tool?.reachesTools !== undefined;
+}
+
 export function shiftTier(tier: Tier, by: number): Tier {
   const index = Math.min(Math.max(TIERS.indexOf(tier) + by, 0), TIERS.length - 1);
   return TIERS[index];
