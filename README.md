@@ -20,6 +20,10 @@ your prompt  ──▶  behavior (CHAT, SUGGEST, REVIEW, PLAN, CODE)  ──▶ 
 
 It works with every provider Pi supports. **You choose the models, AY-PI chooses the tier.**
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="AY-PI demo: auto mode, /chat, /plan then /code, Jev picking SUGGEST and REVIEW, then manual mode" width="100%">
+</p>
+
 ## Install
 
 ```bash
