@@ -1,6 +1,6 @@
 {
   "name": "@ayhanblt/ay-pi",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "Provider-agnostic tier routing for Pi: picks the kind of work, the tier, the tools and (in auto mode) the model for every prompt",
   "type": "module",
   "main": "./dist/index.js",
