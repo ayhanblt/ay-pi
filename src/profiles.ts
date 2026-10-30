@@ -81,6 +81,16 @@ export function isTier(value: string): value is Tier {
   return (TIERS as readonly string[]).includes(value);
 }
 
+export function isBehavior(value: string): value is Behavior {
+  return (BEHAVIORS as readonly string[]).includes(value);
+}
+
+/** The next pinned mode for the mode shortcut: auto (undefined), then each behavior, then auto again. */
+export function cycleMode(current: Behavior | undefined, step: 1 | -1): Behavior | undefined {
+  const modes = [undefined, ...BEHAVIORS];
+  return modes[(modes.indexOf(current) + step + modes.length) % modes.length];
+}
+
 /**
  * The plan in a PLAN answer: everything from its `## Plan` heading on.
  * Answers without the heading (a clarifying question, say) are not plans.

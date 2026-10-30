@@ -45,7 +45,7 @@ const TASK_CRITERIA: Record<Behavior, string> = {
  * The classifier only ever sees the user's message. The pending plan is model output that may
  * carry text from files the model read, so it is never shown to the approval question.
  */
-export function buildQuestions(prompt: string, hasPendingPlan = false): ClassifierContext {
+export function buildQuestions(prompt: string, hasPendingPlan = false, planningOpen = false): ClassifierContext {
   const state: Record<string, string> = { message: prompt.slice(0, MAX_PROMPT_CHARS) };
   const questions: ClassifierContext["questions"] = {
     task: {
@@ -72,6 +72,14 @@ export function buildQuestions(prompt: string, hasPendingPlan = false): Classifi
       criteria: { true: "Approves and asks to implement", false: "Does not approve, asks for changes, or talks about something else" },
     };
   }
+  if (planningOpen) {
+    questions.continuesPlan = {
+      type: "bool",
+      instructions:
+        "Last turn the assistant was planning a change and asked the user a question before finishing the plan. Does `message` answer that question or add details for the plan, rather than start something else?",
+      criteria: { true: "Answers the question or adds plan details", false: "Starts another topic or asks for something else" },
+    };
+  }
   return { state, questions };
 }
 
@@ -79,7 +87,7 @@ type Answers = Awaited<ReturnType<Registry["classify"]>>["answers"];
 
 /** Converts classifier answers; returns undefined when an answer is missing or malformed. */
 export function toVerdict(answers: Answers): ClassifierVerdict | undefined {
-  const { task, fileChanges, complexity, approvesPlan } = answers;
+  const { task, fileChanges, complexity, approvesPlan, continuesPlan } = answers;
   if (task?.type !== "choice" || fileChanges?.type !== "bool" || complexity?.type !== "score") return undefined;
   const behavior = task.choice.toUpperCase() as Behavior;
   if (!BEHAVIORS.includes(behavior)) return undefined;
@@ -89,6 +97,7 @@ export function toVerdict(answers: Answers): ClassifierVerdict | undefined {
     wantsFileChanges: fileChanges.probability,
     complexity: complexity.score,
     approvesPlan: approvesPlan?.type === "bool" ? approvesPlan.probability : undefined,
+    continuesPlan: continuesPlan?.type === "bool" ? continuesPlan.probability : undefined,
   };
 }
 
@@ -98,10 +107,11 @@ export async function classify(
   model: ClassifierModel,
   prompt: string,
   hasPendingPlan: boolean,
+  planningOpen: boolean,
   signal?: AbortSignal,
 ): Promise<ClassifierVerdict | undefined> {
   try {
-    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan), { signal });
+    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan, planningOpen), { signal });
     return result.stopReason === "stop" ? toVerdict(result.answers) : undefined;
   } catch {
     return undefined;

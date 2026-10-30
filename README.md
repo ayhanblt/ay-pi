@@ -131,6 +131,7 @@ With **Jev**, a small and fast classification model, you can just type. A decisi
 | `which improvements would you suggest for this code?` | `SUGGEST · medium` |
 | `review math.js, is there a bug?` | `REVIEW · medium` |
 | `plan adding a multiply function, don't write code yet` | `PLAN · high`, the plan is kept |
+| `only show the address` (answering the plan's question) | `PLAN · high`, planning goes on |
 | `ok, go ahead` (while a plan is pending) | `CODE · medium`, the plan is implemented |
 | `add a subtract function to math.js` | `CODE · medium` |
 | `what are the architectural implications of a monorepo? dig deep` | `CHAT · medium` (hard, so one tier up) |
@@ -188,6 +189,8 @@ Before the first prompt it reads `AY-PI ready · auto tier · auto`. `/ay-pi` sh
 AY-PI suggests the high tier (openai-codex/gpt-6-astra) for this PLAN request.
 ```
 
+**Pin a mode** with **F2** (next) and **F3** (previous): auto → CHAT → SUGGEST → REVIEW → PLAN → CODE → auto. Every prompt then runs as that behavior, as if you typed its command, until you switch again; a command still wins for its own prompt. Handy without a classifier, or when you plan for a while and then code for a while. Without the keys: `/ay-pi mode plan` (or `chat`, `suggest`, `review`, `code`, `auto`). The footer shows `PLAN (pinned)`.
+
 **Pin a tier** for the session with `/ay-pi tier high` (or `low`, `medium`). Every prompt then uses that tier. `/ay-pi tier auto` gives the choice back.
 
 **Fallback:** if a tier is empty or its models are unusable, the neighbouring tier answers (a missing `high` falls back to `medium` before `low`). A failed request is retried on the next model of the chain.
@@ -199,7 +202,8 @@ AY-PI routes prompts. It is not a plan extension and not a sandbox, so it stays 
 - **Their tools are theirs.** Read-only turns block only Pi's own `edit`, `write` and `bash`. AY-PI never changes the active tool list, so tools that other extensions add or switch off stay as they set them.
 - **Their turns are theirs.** When another extension starts a turn (a goal loop, a subagent result, a custom message), AY-PI does not classify it, scope it or add instructions. It only routes it, on the last tier.
 - **Subagents are the main agent's helpers.** The main agent's turn decides; a subagent just does the task it was given. In a Pi started by AY-PI's Pi (a subagent process), AY-PI adds no commands, decisions, instructions or tool scoping. If the subagent inherited `ay-pi/auto`, it runs on the main agent's current tier. (Subagents that run inside the same Pi process are not told apart.)
-- **Using a plan extension?** (Plannotator, a `/plan` mode, ...) Set `"scope": "routing"`. AY-PI then only picks the tier and model: no instructions, no tool scoping, no `## Plan` capture, so your plan extension runs its own flow.
+- **Plannotator works out of the box.** AY-PI asks Plannotator for its phase on every turn (through Plannotator's documented event API). While its plan mode plans, the plan tier answers, questions and answers included; once you approve, the code tier executes. Those turns are Plannotator's: no instructions, no tool scoping, no `## Plan` capture, in either scope. The footer shows `PLAN (Plannotator)`. With plan mode off, AY-PI routes as usual.
+- **Using another plan extension?** (a `/plan` mode, ...) Set `"scope": "routing"`. AY-PI then only picks the tier and model: no instructions, no tool scoping, no `## Plan` capture, so your plan extension runs its own flow.
 - **Two `/plan` commands?** When another extension registers the same command, Pi renames both (`/plan:1`, `/plan:2`) and AY-PI warns you at startup. Rename AY-PI's or turn it off in `ay-pi.json`, then `/reload`:
 
 ```json
@@ -230,8 +234,11 @@ In auto mode the thinking level follows the behavior (low for CHAT, high for PLA
 | Command | Effect |
 | --- | --- |
 | `/chat`, `/suggest`, `/review`, `/plan`, `/code` + prompt | Run the prompt as that behavior |
+| `/code` alone | Implement the pending plan, or else what the conversation has settled on |
 | `/ay-pi` | Mode, tiers, classifier, pending plan, last decision |
 | `/ay-pi auto` / `/ay-pi manual` | Switch mode |
+| **F2** / **F3** | Pin the next / previous mode |
+| `/ay-pi mode chat\|suggest\|review\|plan\|code\|auto` | Pin or unpin the behavior for this session |
 | `/ay-pi tier low\|medium\|high\|auto` | Pin or unpin the tier for this session |
 | `/ay-pi add <tier>` / `/ay-pi remove <tier>` | Edit a tier's model list |
 | `/ay-pi jev` | Show the classifier status and how to add a key |
@@ -243,12 +250,12 @@ In auto mode the thinking level follows the behavior (low for CHAT, high for PLA
 
 AY-PI walks down this ladder and stops at the first rung that applies:
 
-1. **Command.** `/chat`, `/suggest`, `/review`, `/plan` or `/code`. No model is called to decide.
-2. **Pending plan.** After a `PLAN` turn, its `## Plan` section is kept. `/code` implements it; with a classifier, "looks good, go ahead" does too.
+1. **Command or pinned mode.** `/chat`, `/suggest`, `/review`, `/plan` or `/code`, else the mode pinned with F2/F3. No model is called to decide.
+2. **Pending plan.** After a `PLAN` turn, its `## Plan` section is kept. `/code` implements it; with a classifier, "looks good, go ahead" does too. When the `PLAN` turn asked a question instead, the classifier also checks whether your next message answers it; if so, planning goes on (`PLAN · high`) instead of dropping to `CHAT`.
 3. **Classifier.** If Jev (or another classifier) is available, its answers pick the behavior and the tier.
 4. **Safe default.** `CHAT`, medium tier, read-only.
 
-`CODE` is reached only through `/code`, an approved plan, or a classifier that is at least 80% sure files should change.
+`CODE` is reached only through `/code` (or the pinned CODE mode), an approved plan, or a classifier that is at least 80% sure files should change.
 
 Each decision is stored in the session as an `ay-pi.decision` entry, so you can see later why a turn ran the way it did.
 
@@ -274,7 +281,8 @@ Each decision is stored in the session as an `ay-pi.decision` entry, so you can 
 - `classifier`: `auto`, `off`, or a specific `provider/model`.
 - `scope`: `full` (default) or `routing`, see [Working with other extensions](#working-with-other-extensions).
 - `commands`: rename a behavior command (`"plan": "ay-plan"`) or turn it off (`"plan": false`). Read from this file only; `/reload` applies it.
-- A trusted project can override keys in `.pi/ay-pi.json` (except `commands`).
+- `shortcuts`: change the mode keys (`"nextMode": "f4"`) or turn one off (`"previousMode": false`). Defaults are `f2` and `f3`: unused by Pi and sent the same way by every terminal (on Mac laptops press Fn too). Pi reads no Shift/Ctrl/Alt with F keys, and skips keys it reserves (listed under `[Extension issues]` at startup). Read from this file only; `/reload` applies it.
+- A trusted project can override keys in `.pi/ay-pi.json` (except `commands` and `shortcuts`).
 
 </details>
 
@@ -288,7 +296,9 @@ Each decision is stored in the session as an `ay-pi.decision` entry, so you can 
 | `Classifier: none` in `/ay-pi` | Run `/login` → TypeSafe, then check `/ay-pi jev` |
 | The answer came from another tier than expected | Look for `low→medium` in the footer: that tier is empty or unusable |
 | AY-PI warns that `/plan` was renamed to `/plan:1` | Another extension registers `/plan` too: set `"commands": { "plan": "ay-plan" }` (or `false`) and `/reload` |
-| A plan extension's flow is replaced by AY-PI's `## Plan` | Set `"scope": "routing"` |
+| A plan extension's flow is replaced by AY-PI's `## Plan` | Set `"scope": "routing"` (not needed for Plannotator) |
+| F2 does nothing | On a Mac laptop press Fn+F2, or pick another key with `"shortcuts"`; `/ay-pi mode` always works |
+| Every prompt runs as the same behavior | A mode is pinned (`PLAN (pinned)` in the footer): press F2/F3 until `auto`, or `/ay-pi mode auto` |
 
 ## Development
 

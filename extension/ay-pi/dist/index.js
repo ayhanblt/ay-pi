@@ -1,4 +1,5 @@
 // src/index.ts
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -48,6 +49,13 @@ function shiftTier(tier, by) {
 }
 function isTier(value) {
   return TIERS.includes(value);
+}
+function isBehavior(value) {
+  return BEHAVIORS.includes(value);
+}
+function cycleMode(current, step) {
+  const modes = [void 0, ...BEHAVIORS];
+  return modes[(modes.indexOf(current) + step + modes.length) % modes.length];
 }
 function extractPlan(answer) {
   const start = answer.search(/^##\s+Plan\b/im);
@@ -120,7 +128,7 @@ var TASK_CRITERIA = {
   PLAN: "Wants work designed or planned before anything is implemented",
   CODE: "Wants files changed: implement, fix, refactor, or write tests"
 };
-function buildQuestions(prompt, hasPendingPlan = false) {
+function buildQuestions(prompt, hasPendingPlan = false, planningOpen = false) {
   const state = { message: prompt.slice(0, MAX_PROMPT_CHARS) };
   const questions = {
     task: {
@@ -146,10 +154,17 @@ function buildQuestions(prompt, hasPendingPlan = false) {
       criteria: { true: "Approves and asks to implement", false: "Does not approve, asks for changes, or talks about something else" }
     };
   }
+  if (planningOpen) {
+    questions.continuesPlan = {
+      type: "bool",
+      instructions: "Last turn the assistant was planning a change and asked the user a question before finishing the plan. Does `message` answer that question or add details for the plan, rather than start something else?",
+      criteria: { true: "Answers the question or adds plan details", false: "Starts another topic or asks for something else" }
+    };
+  }
   return { state, questions };
 }
 function toVerdict(answers) {
-  const { task, fileChanges, complexity, approvesPlan } = answers;
+  const { task, fileChanges, complexity, approvesPlan, continuesPlan } = answers;
   if (task?.type !== "choice" || fileChanges?.type !== "bool" || complexity?.type !== "score") return void 0;
   const behavior = task.choice.toUpperCase();
   if (!BEHAVIORS.includes(behavior)) return void 0;
@@ -158,12 +173,13 @@ function toVerdict(answers) {
     confidence: task.probabilities[task.choice] ?? task.confidence,
     wantsFileChanges: fileChanges.probability,
     complexity: complexity.score,
-    approvesPlan: approvesPlan?.type === "bool" ? approvesPlan.probability : void 0
+    approvesPlan: approvesPlan?.type === "bool" ? approvesPlan.probability : void 0,
+    continuesPlan: continuesPlan?.type === "bool" ? continuesPlan.probability : void 0
   };
 }
-async function classify(registry, model, prompt, hasPendingPlan, signal) {
+async function classify(registry, model, prompt, hasPendingPlan, planningOpen, signal) {
   try {
-    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan), { signal });
+    const result = await registry.classify(model, buildQuestions(prompt, hasPendingPlan, planningOpen), { signal });
     return result.stopReason === "stop" ? toVerdict(result.answers) : void 0;
   } catch {
     return void 0;
@@ -193,8 +209,15 @@ function commandNames(overrides) {
 // src/config.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+var SHORTCUTS = { nextMode: "f2", previousMode: "f3" };
 function defaultConfig() {
-  return { tiers: { low: [], medium: [], high: [] }, classifier: "auto", scope: "full", commands: {} };
+  return { tiers: { low: [], medium: [], high: [] }, classifier: "auto", scope: "full", commands: {}, shortcuts: {} };
+}
+function shortcutKeys(overrides) {
+  return Object.keys(SHORTCUTS).flatMap((name) => {
+    const key = overrides[name] ?? SHORTCUTS[name];
+    return key === false ? [] : [[key, name]];
+  });
 }
 function parseConfig(raw, source) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -234,6 +257,21 @@ function parseConfig(raw, source) {
     }
     result.commands = commands;
   }
+  if (input.shortcuts !== void 0) {
+    if (typeof input.shortcuts !== "object" || input.shortcuts === null) throw new Error(`${source}: "shortcuts" must be an object`);
+    const shortcuts = {};
+    for (const [key, value] of Object.entries(input.shortcuts)) {
+      if (!(key in SHORTCUTS)) throw new Error(`${source}: unknown shortcut "${key}" (use ${Object.keys(SHORTCUTS).join(", ")})`);
+      if (value !== false && (typeof value !== "string" || !/^(?:(?:ctrl|shift|alt|super)\+)*[^\s+]+$/.test(value))) {
+        throw new Error(`${source}: shortcuts.${key} must be false or a key like "f3" or "ctrl+shift+m"`);
+      }
+      if (typeof value === "string" && /\+f\d+$/.test(value)) {
+        throw new Error(`${source}: shortcuts.${key}: Pi does not read modifiers with F keys, use a plain one like "f4"`);
+      }
+      shortcuts[key] = value;
+    }
+    result.shortcuts = shortcuts;
+  }
   return result;
 }
 function readFile(path) {
@@ -245,7 +283,8 @@ function merge(config, part) {
     tiers: { ...config.tiers, ...part.tiers },
     classifier: part.classifier ?? config.classifier,
     scope: part.scope ?? config.scope,
-    commands: { ...config.commands, ...part.commands }
+    commands: { ...config.commands, ...part.commands },
+    shortcuts: { ...config.shortcuts, ...part.shortcuts }
   };
 }
 function loadConfig(paths) {
@@ -254,8 +293,13 @@ function loadConfig(paths) {
 function updateUserConfig(path, change) {
   const config = merge(defaultConfig(), readFile(path));
   change(config);
-  const { scope, commands, ...rest } = config;
-  const file = { ...rest, ...scope !== "full" && { scope }, ...Object.keys(commands).length > 0 && { commands } };
+  const { scope, commands, shortcuts, ...rest } = config;
+  const file = {
+    ...rest,
+    ...scope !== "full" && { scope },
+    ...Object.keys(commands).length > 0 && { commands },
+    ...Object.keys(shortcuts).length > 0 && { shortcuts }
+  };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(file, null, 2)}
 `);
@@ -265,7 +309,10 @@ function updateUserConfig(path, change) {
 // src/decide.ts
 var WRITE_CONFIDENCE = 0.8;
 var TASK_CONFIDENCE = 0.5;
-function extensionTurn(previous) {
+function extensionTurn(previous, workflow) {
+  if (workflow) {
+    return { behavior: workflow.behavior, tier: PROFILES[workflow.behavior].tier, source: "extension", reason: workflow.reason, usePlan: false };
+  }
   return {
     behavior: previous?.behavior ?? SAFE_DEFAULT.behavior,
     tier: previous?.tier ?? SAFE_DEFAULT.tier,
@@ -275,10 +322,18 @@ function extensionTurn(previous) {
   };
 }
 function decide(input) {
-  const decision = climb(input);
+  const pinned = !input.command && input.pinnedBehavior;
+  let decision;
+  if (!input.command && !pinned && input.workflow) {
+    const { behavior, reason } = input.workflow;
+    decision = { behavior, tier: PROFILES[behavior].tier, source: "workflow", reason, usePlan: false };
+  } else {
+    decision = climb(pinned ? { ...input, command: input.pinnedBehavior } : input);
+    if (pinned) decision = { ...decision, reason: decision.usePlan ? "pinned CODE mode approves the pending plan" : "pinned mode" };
+  }
   return input.pinnedTier ? { ...decision, tier: input.pinnedTier, reason: `${decision.reason}; tier pinned` } : decision;
 }
-function climb({ command, hasPendingPlan, verdict }) {
+function climb({ command, hasPendingPlan, planningOpen, verdict }) {
   if (command) {
     const usePlan = command === "CODE" && hasPendingPlan;
     return {
@@ -291,6 +346,10 @@ function climb({ command, hasPendingPlan, verdict }) {
   }
   if (verdict && hasPendingPlan && (verdict.approvesPlan ?? 0) >= WRITE_CONFIDENCE) {
     return { behavior: "CODE", tier: PROFILES.CODE.tier, source: "plan", reason: "classifier: plan approved", usePlan: true };
+  }
+  const wantsCodeNow = verdict?.behavior === "CODE" && verdict.wantsFileChanges >= WRITE_CONFIDENCE;
+  if (verdict && planningOpen && (verdict.continuesPlan ?? 0) >= TASK_CONFIDENCE && !wantsCodeNow) {
+    return { behavior: "PLAN", tier: PROFILES.PLAN.tier, source: "classifier", reason: "classifier: answers the planning question", usePlan: false };
   }
   if (verdict && verdict.confidence >= TASK_CONFIDENCE) {
     let behavior = verdict.behavior;
@@ -316,6 +375,11 @@ var STATE_ENTRY = "ay-pi.state";
 var DECISION_ENTRY = "ay-pi.decision";
 var PID_ENV = "AY_PI_PID";
 var TIER_ENV = "AY_PI_TIER";
+var PLANNOTATOR_CHANNEL = "plannotator:request";
+var PLANNOTATOR_WORKFLOWS = {
+  planning: { behavior: "PLAN", reason: "Plannotator: planning" },
+  executing: { behavior: "CODE", reason: "Plannotator: executing the approved plan" }
+};
 function ayPi(pi) {
   let config = defaultConfig();
   let session = {};
@@ -326,13 +390,14 @@ function ayPi(pi) {
   let lastSuggestion;
   const extensionPrompts = [];
   const userConfigPath = () => join(getAgentDir(), "ay-pi.json");
-  const behaviorCommands = (() => {
+  const userFile = (() => {
     try {
-      return commandNames(loadConfig([userConfigPath()]).commands);
+      return loadConfig([userConfigPath()]);
     } catch {
-      return commandNames({});
+      return defaultConfig();
     }
   })();
+  const behaviorCommands = commandNames(userFile.commands);
   const codeCommand = behaviorCommands.find(([, behavior]) => behavior === "CODE")?.[0];
   const approveHint = codeCommand ? `reply with /${codeCommand}` : "reply to approve it";
   const isRoutingOnly = () => config.scope === "routing";
@@ -387,12 +452,13 @@ function ayPi(pi) {
     const mode = (isAuto(ctx) ? "auto" : "manual") + (isRoutingOnly() ? " \xB7 routing only" : "");
     const pin = session.pinnedTier ? " (pinned)" : "";
     if (!decision) {
-      ctx.ui.setStatus("ay-pi", `AY-PI ready \xB7 ${session.pinnedTier ?? "auto tier"}${pin} \xB7 ${mode}`);
+      const pinned = session.pinnedBehavior ? `${session.pinnedBehavior} (pinned) \xB7 ` : "";
+      ctx.ui.setStatus("ay-pi", `AY-PI ready \xB7 ${pinned}${session.pinnedTier ?? "auto tier"}${pin} \xB7 ${mode}`);
       return;
     }
     const tier = routed?.tier && routed.tier !== decision.tier ? `${decision.tier}\u2192${routed.tier}` : decision.tier;
     const model = isAuto(ctx) && routed ? ` \xB7 ${routed.model}` : "";
-    const label = decision.source === "extension" ? "extension turn" : decision.behavior;
+    const label = decision.reason.startsWith("Plannotator") ? `${decision.behavior} (Plannotator)` : decision.source === "extension" ? "extension turn" : `${decision.behavior}${decision.reason.startsWith("pinned") ? " (pinned)" : ""}`;
     ctx.ui.setStatus("ay-pi", `AY-PI ${label} \xB7 ${tier}${pin} \xB7 ${mode}${model}`);
   }
   pi.registerVirtualModel({
@@ -422,6 +488,20 @@ function ayPi(pi) {
   if (subagentTier) {
     pi.on("session_start", async (_event, ctx) => reloadConfig(ctx));
     return;
+  }
+  function plannotatorWorkflow() {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(void 0), 25);
+      const respond = (response) => {
+        clearTimeout(timer);
+        resolve(response?.status === "handled" ? PLANNOTATOR_WORKFLOWS[response.result?.phase] : void 0);
+      };
+      try {
+        pi.events.emit(PLANNOTATOR_CHANNEL, { requestId: randomUUID(), action: "plan-mode", payload: { mode: "status" }, respond });
+      } catch {
+        respond(void 0);
+      }
+    });
   }
   pi.on("session_start", async (_event, ctx) => {
     reloadConfig(ctx);
@@ -460,8 +540,9 @@ function ayPi(pi) {
     if (event.messageType === "user") command = void 0;
     const queued = event.messageType === "user" ? extensionPrompts.indexOf(event.prompt) : -1;
     if (queued !== -1) extensionPrompts.splice(queued, 1);
+    const workflow = await plannotatorWorkflow();
     if (event.messageType !== "user" || !explicit && queued !== -1) {
-      decision = extensionTurn(decision);
+      decision = extensionTurn(decision, workflow);
       routed = void 0;
       showStatus(ctx);
       pi.appendEntry(DECISION_ENTRY, { ...decision, mode: isAuto(ctx) ? "auto" : "manual" });
@@ -469,12 +550,22 @@ function ayPi(pi) {
     }
     const routingOnly = isRoutingOnly();
     const hasPendingPlan = !routingOnly && Boolean(session.pendingPlan);
+    const planningOpen = !routingOnly && Boolean(session.planningOpen);
     let verdict;
-    if (!explicit) {
+    if (!explicit && !session.pinnedBehavior && !workflow) {
       const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
-      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, hasPendingPlan, ctx.signal);
+      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, hasPendingPlan, planningOpen, ctx.signal);
     }
-    decision = decide({ command: explicit, hasPendingPlan, verdict, pinnedTier: session.pinnedTier });
+    decision = decide({
+      command: explicit,
+      pinnedBehavior: session.pinnedBehavior,
+      hasPendingPlan,
+      planningOpen,
+      workflow,
+      verdict,
+      pinnedTier: session.pinnedTier
+    });
+    if (decision.behavior !== "PLAN") session.planningOpen = void 0;
     const plan = decision.usePlan ? session.pendingPlan : void 0;
     if (plan) session.pendingPlan = void 0;
     if (decision.source === "plan") {
@@ -489,7 +580,7 @@ function ayPi(pi) {
     showStatus(ctx);
     pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual", ...routingOnly && { scope: "routing" } });
     saveState();
-    if (routingOnly) return {};
+    if (routingOnly || decision.source === "workflow") return {};
     return {
       systemPrompt: `${event.systemPrompt}
 
@@ -502,7 +593,7 @@ ${plan}`, display: false } : void 0
   pi.on("tool_call", async (event) => {
     if (isRoutingOnly()) return;
     const current = decision ?? { ...SAFE_DEFAULT, source: "default" };
-    if (current.source === "extension" || !blocksTool(current.behavior, event.toolName)) return;
+    if (current.source === "extension" || current.source === "workflow" || !blocksTool(current.behavior, event.toolName)) return;
     const unlock = codeCommand ? `reply with /${codeCommand}` : "ask for the change directly";
     return {
       block: true,
@@ -510,14 +601,13 @@ ${plan}`, display: false } : void 0
     };
   });
   pi.on("agent_end", async (event) => {
-    if (isRoutingOnly() || decision?.behavior !== "PLAN" || decision.source === "extension") return;
+    if (isRoutingOnly() || decision?.behavior !== "PLAN" || decision.source === "extension" || decision.source === "workflow") return;
     const plan = [...event.messages].reverse().filter((message) => message.role === "assistant").map(
       (message) => typeof message.content === "string" ? message.content : (message.content ?? []).filter((part) => part?.type === "text").map((part) => part.text).join("\n")
     ).map(extractPlan).find(Boolean);
-    if (plan) {
-      session.pendingPlan = plan;
-      saveState();
-    }
+    session.pendingPlan = plan ?? session.pendingPlan;
+    session.planningOpen = plan ? void 0 : true;
+    saveState();
   });
   for (const [name, behavior] of behaviorCommands) {
     pi.registerCommand(name, {
@@ -525,7 +615,7 @@ ${plan}`, display: false } : void 0
       handler: async (args, ctx) => {
         if (!ctx.isIdle()) return ctx.ui.notify("AY-PI: wait for the current run to finish.", "warning");
         let text = args.trim();
-        if (!text && behavior === "CODE" && session.pendingPlan) text = "Implement the approved plan.";
+        if (!text && behavior === "CODE") text = session.pendingPlan ? "Implement the approved plan." : "Implement what we just discussed.";
         if (!text) return ctx.ui.notify(`AY-PI: write your request after /${name}.`, "warning");
         command = behavior;
         pi.sendUserMessage(text);
@@ -534,7 +624,23 @@ ${plan}`, display: false } : void 0
       }
     });
   }
-  const SUBCOMMANDS = ["status", "auto", "manual", "tier", "add", "remove", "jev", "classifier", "reload"];
+  function pinMode(ctx, behavior) {
+    session.pinnedBehavior = behavior;
+    saveState();
+    showStatus(ctx);
+    ctx.ui.notify(
+      behavior ? `AY-PI: ${behavior} mode pinned. Prompts run as ${behavior} until you switch (a command still wins for its prompt).` : "AY-PI: mode unpinned. Each prompt is decided on its own again.",
+      "info"
+    );
+  }
+  for (const [key, name] of shortcutKeys(userFile.shortcuts)) {
+    pi.registerShortcut(key, {
+      description: name === "nextMode" ? "AY-PI: pin the next mode" : "AY-PI: pin the previous mode",
+      handler: (ctx) => pinMode(ctx, cycleMode(session.pinnedBehavior, name === "nextMode" ? 1 : -1))
+    });
+  }
+  const SUBCOMMANDS = ["status", "auto", "manual", "mode", "tier", "add", "remove", "jev", "classifier", "reload"];
+  const MODE_ARGS = ["auto", ...BEHAVIORS.map((behavior) => behavior.toLowerCase())];
   pi.registerCommand("ay-pi", {
     description: "AY-PI: status, auto/manual mode, tier models, classifier (Jev)",
     getArgumentCompletions: (prefix) => {
@@ -543,6 +649,9 @@ ${plan}`, display: false } : void 0
       if (["tier", "add", "remove"].includes(sub)) {
         const options = sub === "tier" ? [...TIERS, "auto"] : [...TIERS];
         return options.filter((name) => name.startsWith(arg)).map((name) => ({ value: `${sub} ${name}`, label: name }));
+      }
+      if (sub === "mode") {
+        return MODE_ARGS.filter((name) => name.startsWith(arg)).map((name) => ({ value: `${sub} ${name}`, label: name }));
       }
       if (sub === "classifier") {
         return ["auto", "off"].filter((name) => name.startsWith(arg)).map((name) => ({ value: `${sub} ${name}`, label: name }));
@@ -557,6 +666,7 @@ ${plan}`, display: false } : void 0
           const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
           const lines = [
             `Mode: ${isAuto(ctx) ? "auto (ay-pi/auto)" : `manual (${ctx.model ? formatModelRef(ctx.model) : "no model"})`}`,
+            `Behavior: ${session.pinnedBehavior ? `${session.pinnedBehavior} (pinned)` : "auto"}`,
             `Tier: ${session.pinnedTier ? `${session.pinnedTier} (pinned)` : "auto"}`,
             ...TIERS.map((tier) => `  ${tier.padEnd(6)} ${config.tiers[tier].join(", ") || "(empty)"}`),
             `Classifier: ${classifier ? formatModelRef(classifier) : `none (${config.classifier})`}`,
@@ -582,6 +692,12 @@ ${plan}`, display: false } : void 0
             return notify(`AY-PI: manual mode on ${lastRouted}. AY-PI will only suggest tiers now.`);
           }
           return notify("AY-PI: pick a model with /model. AY-PI will only suggest tiers.");
+        }
+        case "mode": {
+          const behavior = arg.toUpperCase();
+          if (arg === "auto") return pinMode(ctx, void 0);
+          if (isBehavior(behavior)) return pinMode(ctx, behavior);
+          return notify(`Usage: /ay-pi mode ${MODE_ARGS.join("|")}`, "warning");
         }
         case "tier": {
           if (arg === "auto") session.pinnedTier = void 0;
