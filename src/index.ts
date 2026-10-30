@@ -3,31 +3,37 @@
  *
  * Per user prompt:
  *   /plan, /code, ...   remember the behavior and send the prompt
- *   before_agent_start  decide behavior + tier, scope tools, add instructions
+ *   before_agent_start  decide behavior + tier, add instructions
+ *   tool_call           read-only turns block Pi's edit/write/bash
  *   route (ay-pi/auto)  auto mode: pick the model for the tier
  *   agent_end           remember the `## Plan` of a PLAN answer as the pending plan
  *
  * Auto mode = the selected model is the virtual model `ay-pi/auto`.
  * Manual mode = any other model; AY-PI only suggests a tier/model.
+ * Subagent = a Pi started by an AY-PI process; AY-PI stays out of it (see subagentTier).
  */
 
 import { join } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { classify, findClassifier, listClassifiers } from "./classifier.js";
-import { COMMANDS } from "./commands.js";
+import { commandNames, renamedCommands } from "./commands.js";
 import { defaultConfig, loadConfig, updateUserConfig, type AyPiConfig } from "./config.js";
-import { decide, type Decision } from "./decide.js";
+import { decide, extensionTurn, type Decision } from "./decide.js";
 import { formatModelRef, hasAnyTierModel, parseModelRef, resolveTierModel, type ModelRef } from "./models.js";
-import { PROFILES, SAFE_DEFAULT, TIERS, WRITE_TOOLS, behaviorInstructions, extractPlan, isTier, readOnlyAllows, type Behavior, type Tier } from "./profiles.js";
+import { PROFILES, SAFE_DEFAULT, TIERS, behaviorInstructions, blocksTool, extractPlan, isTier, type Behavior, type Tier } from "./profiles.js";
 
 const VIRTUAL: ModelRef = { provider: "ay-pi", id: "auto" };
 const STATE_ENTRY = "ay-pi.state";
 const DECISION_ENTRY = "ay-pi.decision";
 
+// Child processes inherit these, so a Pi started by AY-PI's Pi (a subagent) knows it is one.
+const PID_ENV = "AY_PI_PID";
+const TIER_ENV = "AY_PI_TIER";
+
 interface SessionState {
   pendingPlan?: string;
   pinnedTier?: Tier;
-  /** Write tools AY-PI switched off for read-only turns; restored for CODE. */
+  /** Before 2.0.5 AY-PI switched write tools off; sessions saved then get them back once. */
   removedTools?: string[];
 }
 
@@ -46,8 +52,30 @@ export default function ayPi(pi: ExtensionAPI) {
   let lastRouted: string | undefined;
   let routed: { tier?: Tier; model: string } | undefined; // what auto mode used for the current decision
   let lastSuggestion: string | undefined;
+  const extensionPrompts: string[] = []; // prompts other extensions sent, waiting for their turn
 
   const userConfigPath = () => join(getAgentDir(), "ay-pi.json");
+
+  // Commands are registered at load time, so their names come from the user file only (a reload applies changes).
+  const behaviorCommands = (() => {
+    try {
+      return commandNames(loadConfig([userConfigPath()]).commands);
+    } catch {
+      return commandNames({});
+    }
+  })();
+  const codeCommand = behaviorCommands.find(([, behavior]) => behavior === "CODE")?.[0];
+  /** How the user approves a plan, for messages to the user and the model. */
+  const approveHint = codeCommand ? `reply with /${codeCommand}` : "reply to approve it";
+  const isRoutingOnly = () => config.scope === "routing";
+
+  // The main agent decides; a subagent just does the delegated task. In a subagent AY-PI adds no commands,
+  // decisions or tool scoping. Only ay-pi/auto, if the subagent inherited it, resolves to the parent's tier.
+  const parentPid = process.env[PID_ENV];
+  const parentTier = process.env[TIER_ENV];
+  const subagentTier: Tier | undefined =
+    parentPid && parentPid !== String(process.pid) ? (parentTier && isTier(parentTier) ? parentTier : "medium") : undefined;
+  process.env[PID_ENV] = String(process.pid);
 
   function reloadConfig(ctx: ExtensionContext): void {
     const paths = [userConfigPath()];
@@ -87,21 +115,6 @@ export default function ayPi(pi: ExtensionAPI) {
     return model;
   }
 
-  // Pi restores the active tools with the session, so remember what we switched off instead of a baseline.
-  function applyTools(behavior: Decision["behavior"]): void {
-    const current = pi.getActiveTools();
-    let wanted: string[];
-    if (PROFILES[behavior].canWrite) {
-      wanted = [...current, ...(session.removedTools ?? []).filter((tool) => !current.includes(tool))];
-      session.removedTools = undefined;
-    } else {
-      const removed = current.filter((tool) => WRITE_TOOLS.has(tool));
-      session.removedTools = [...new Set([...(session.removedTools ?? []), ...removed])];
-      wanted = current.filter((tool) => !WRITE_TOOLS.has(tool));
-    }
-    if (wanted.length !== current.length) pi.setActiveTools(wanted); // only on change: the tool list is part of the cached prefix
-  }
-
   function suggestInManualMode(ctx: ExtensionContext, current: Decision): void {
     if (!hasAnyTierModel(config.tiers)) return;
     const currentRef = ctx.model ? formatModelRef(ctx.model) : undefined;
@@ -118,7 +131,7 @@ export default function ayPi(pi: ExtensionAPI) {
   }
 
   function showStatus(ctx: ExtensionContext): void {
-    const mode = isAuto(ctx) ? "auto" : "manual";
+    const mode = (isAuto(ctx) ? "auto" : "manual") + (isRoutingOnly() ? " · routing only" : "");
     const pin = session.pinnedTier ? " (pinned)" : "";
     if (!decision) {
       ctx.ui.setStatus("ay-pi", `AY-PI ready · ${session.pinnedTier ?? "auto tier"}${pin} · ${mode}`);
@@ -127,7 +140,8 @@ export default function ayPi(pi: ExtensionAPI) {
     // Show a fallback as "low→medium" and, in auto mode, the model that actually answered.
     const tier = routed?.tier && routed.tier !== decision.tier ? `${decision.tier}→${routed.tier}` : decision.tier;
     const model = isAuto(ctx) && routed ? ` · ${routed.model}` : "";
-    ctx.ui.setStatus("ay-pi", `AY-PI ${decision.behavior} · ${tier}${pin} · ${mode}${model}`);
+    const label = decision.source === "extension" ? "extension turn" : decision.behavior;
+    ctx.ui.setStatus("ay-pi", `AY-PI ${label} · ${tier}${pin} · ${mode}${model}`);
   }
 
   // ---------------------------------------------------------------- virtual model
@@ -138,7 +152,7 @@ export default function ayPi(pi: ExtensionAPI) {
     name: "AY-PI Auto",
     route(request, ctx) {
       const current = decision ?? { ...SAFE_DEFAULT, source: "default", reason: "no decision yet", usePlan: false };
-      const thinkingLevel = PROFILES[current.behavior].thinking;
+      const thinkingLevel = subagentTier ? request.thinkingLevel : PROFILES[current.behavior].thinking;
 
       // Tool follow-ups stay on the model that handled the turn (keeps the prompt cache warm).
       if (request.reason === "continuation" && request.previous) {
@@ -146,7 +160,7 @@ export default function ayPi(pi: ExtensionAPI) {
       }
 
       // Compaction summaries and other side requests: cheapest tier.
-      const tier: Tier = request.reason === "direct" ? "low" : current.tier;
+      const tier: Tier = request.reason === "direct" ? "low" : (subagentTier ?? current.tier);
 
       // A retry moves to the next model in the chain.
       const exclude = new Set<string>();
@@ -156,13 +170,18 @@ export default function ayPi(pi: ExtensionAPI) {
       const model = resolved?.model ?? fallbackModel(ctx, request.previous?.model);
       const ref = resolved?.ref ?? formatModelRef(model);
       lastRouted = ref;
-      if (request.reason !== "direct") {
+      if (request.reason !== "direct" && !subagentTier) {
         routed = { tier: resolved?.tier, model: model.id };
         showStatus(ctx);
       }
       return { model, thinkingLevel, state: { tier: resolved?.tier ?? tier, model: ref } };
     },
   });
+
+  if (subagentTier) {
+    pi.on("session_start", async (_event, ctx) => reloadConfig(ctx));
+    return;
+  }
 
   // ---------------------------------------------------------------- events
 
@@ -172,67 +191,105 @@ export default function ayPi(pi: ExtensionAPI) {
       .reverse()
       .find((entry: any) => entry.type === "custom" && entry.customType === STATE_ENTRY) as any;
     session = saved?.data ? { ...saved.data } : {};
+    if (session.removedTools?.length) {
+      const active = pi.getActiveTools();
+      pi.setActiveTools([...active, ...session.removedTools.filter((tool) => !active.includes(tool))]);
+      session.removedTools = undefined;
+      saveState();
+    }
     decision = undefined;
     routed = undefined;
+    extensionPrompts.length = 0;
     showStatus(ctx);
+    // Pi renames commands that two extensions register (/plan:1, /plan:2), so neither answers to /plan any more.
+    const ours = behaviorCommands.map(([name]) => name);
+    for (const base of renamedCommands(pi.getCommands().map((info) => info.name), ours)) {
+      ctx.ui.notify(
+        `AY-PI: another extension also registers /${base}, so Pi renamed both to /${base}:1 and /${base}:2. ` +
+          `Give AY-PI's another name with "commands": { "${base}": "ay-${base}" } in ay-pi.json, or leave /${base} to the other extension with false, then /reload.`,
+        "warning",
+      );
+    }
     if (isAuto(ctx) && !hasAnyTierModel(config.tiers)) {
       ctx.ui.notify("AY-PI: no tier models configured yet. Add some with /ay-pi add low|medium|high.", "warning");
     }
   });
 
+  // Prompts sent by other extensions (pi.sendUserMessage) reach before_agent_start as user messages.
+  // Remember them here so their turns are left to the extension that sent them.
+  pi.on("input", async (event) => {
+    if (event.source === "extension" && !command) {
+      extensionPrompts.push(event.text);
+      if (extensionPrompts.length > 20) extensionPrompts.shift();
+    }
+    return { action: "continue" };
+  });
+
   pi.on("before_agent_start", async (event, ctx) => {
-    if (event.messageType !== "user") return {};
-    const explicit = command;
-    command = undefined;
+    const explicit = event.messageType === "user" ? command : undefined;
+    if (event.messageType === "user") command = undefined;
+    const queued = event.messageType === "user" ? extensionPrompts.indexOf(event.prompt) : -1;
+    if (queued !== -1) extensionPrompts.splice(queued, 1);
+
+    if (event.messageType !== "user" || (!explicit && queued !== -1)) {
+      decision = extensionTurn(decision);
+      routed = undefined;
+      showStatus(ctx);
+      pi.appendEntry(DECISION_ENTRY, { ...decision, mode: isAuto(ctx) ? "auto" : "manual" });
+      return {};
+    }
+
+    // Routing only: the behavior just picks the tier. Plans, instructions and tool scoping belong to other extensions.
+    const routingOnly = isRoutingOnly();
+    const hasPendingPlan = !routingOnly && Boolean(session.pendingPlan);
 
     let verdict;
     if (!explicit) {
       const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
-      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, Boolean(session.pendingPlan), ctx.signal);
+      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, hasPendingPlan, ctx.signal);
     }
 
-    decision = decide({
-      command: explicit,
-      hasPendingPlan: Boolean(session.pendingPlan),
-      verdict,
-      pinnedTier: session.pinnedTier,
-    });
+    decision = decide({ command: explicit, hasPendingPlan, verdict, pinnedTier: session.pinnedTier });
     const plan = decision.usePlan ? session.pendingPlan : undefined;
     if (plan) session.pendingPlan = undefined;
 
-    applyTools(decision.behavior);
     if (decision.source === "plan") {
-      ctx.ui.notify("AY-PI: plan approved, implementing it now (write tools on).", "info");
+      ctx.ui.notify("AY-PI: plan approved, implementing it now.", "info");
     }
-    if (decision.source === "default" && session.pendingPlan) {
-      ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
+    if (decision.source === "default" && hasPendingPlan) {
+      ctx.ui.notify(`AY-PI: a plan is waiting. To implement it, ${approveHint}; this turn stays read-only.`, "info");
     }
     if (!isAuto(ctx)) suggestInManualMode(ctx, decision);
+    process.env[TIER_ENV] = decision.tier;
     routed = undefined;
     showStatus(ctx);
-    pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual" });
+    pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual", ...(routingOnly && { scope: "routing" }) });
     saveState();
 
+    if (routingOnly) return {};
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${behaviorInstructions(decision.behavior)}`,
+      systemPrompt: `${event.systemPrompt}\n\n${behaviorInstructions(decision.behavior).replace("reply with /code", approveHint)}`,
       message: plan
         ? { customType: "ay-pi.plan", content: `Approved plan. Implement it; do not re-plan.\n\n${plan}`, display: false }
         : undefined,
     };
   });
 
-  // Removing write tools only hides them from the model; extension and MCP tools stay callable
-  // (directly or through codemode). Every call, nested ones included, passes here.
+  // The tool list stays the same every turn (other extensions manage it, and it keeps the prompt cache warm).
+  // Read-only turns block Pi's own write tools here instead; nested calls (codemode) pass here too.
   pi.on("tool_call", async (event) => {
-    const behavior = (decision ?? SAFE_DEFAULT).behavior;
-    if (PROFILES[behavior].canWrite) return;
-    const tool = pi.getAllTools().find((info) => info.name === event.toolName);
-    if (readOnlyAllows(event.toolName, tool)) return;
-    return { block: true, reason: `AY-PI: this is a read-only ${behavior} turn, so ${event.toolName} is blocked. Ask the user to reply with /code to make changes.` };
+    if (isRoutingOnly()) return;
+    const current = decision ?? { ...SAFE_DEFAULT, source: "default" as const };
+    if (current.source === "extension" || !blocksTool(current.behavior, event.toolName)) return;
+    const unlock = codeCommand ? `reply with /${codeCommand}` : "ask for the change directly";
+    return {
+      block: true,
+      reason: `AY-PI: this is a read-only ${current.behavior} turn, so ${event.toolName} is blocked. Ask the user to ${unlock} to make changes.`,
+    };
   });
 
   pi.on("agent_end", async (event) => {
-    if (decision?.behavior !== "PLAN") return;
+    if (isRoutingOnly() || decision?.behavior !== "PLAN" || decision.source === "extension") return;
     const plan = [...event.messages]
       .reverse()
       .filter((message: any) => message.role === "assistant")
@@ -252,7 +309,7 @@ export default function ayPi(pi: ExtensionAPI) {
   // ---------------------------------------------------------------- /chat /suggest /review /plan /code
 
   // Registered so Pi's autocomplete offers them; unregistered, Enter picks a fuzzy match instead.
-  for (const [name, behavior] of Object.entries(COMMANDS)) {
+  for (const [name, behavior] of behaviorCommands) {
     pi.registerCommand(name, {
       description: `AY-PI: run this prompt as ${behavior}`,
       handler: async (args, ctx) => {
@@ -299,7 +356,8 @@ export default function ayPi(pi: ExtensionAPI) {
             `Tier: ${session.pinnedTier ? `${session.pinnedTier} (pinned)` : "auto"}`,
             ...TIERS.map((tier) => `  ${tier.padEnd(6)} ${config.tiers[tier].join(", ") || "(empty)"}`),
             `Classifier: ${classifier ? formatModelRef(classifier) : `none (${config.classifier})`}`,
-            `Pending plan: ${session.pendingPlan ? "yes (/code to implement)" : "no"}`,
+            `Scope: ${isRoutingOnly() ? "routing only (tiers and models; tools, instructions and plans are left to other extensions)" : "full"}`,
+            `Pending plan: ${session.pendingPlan ? `yes (${approveHint})` : "no"}`,
             decision ? `Last decision: ${decision.behavior} · ${decision.tier} · ${decision.reason}` : "Last decision: -",
             lastRouted ? `Last routed model: ${lastRouted}` : "",
           ];

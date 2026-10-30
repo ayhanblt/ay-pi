@@ -11,7 +11,7 @@
 AY-PI is an extension for the [Pi coding agent](https://github.com/earendil-works/pi). Before every prompt it decides what kind of work you are asking for, and then:
 
 - 🧭 **picks the tier:** a quick question gets a cheap model, a plan gets your strongest one;
-- 🔒 **scopes the tools:** only coding turns can edit files or run commands (extension and MCP tools too, unless they declare themselves read-only);
+- 🔒 **scopes the tools:** only coding turns can use Pi's edit, write and bash tools;
 - 🤖 **picks the model** in auto mode, or just suggests one in manual mode.
 
 ```text
@@ -192,6 +192,25 @@ AY-PI suggests the high tier (openai-codex/gpt-6-astra) for this PLAN request.
 
 **Fallback:** if a tier is empty or its models are unusable, the neighbouring tier answers (a missing `high` falls back to `medium` before `low`). A failed request is retried on the next model of the chain.
 
+## Working with other extensions
+
+AY-PI routes prompts. It is not a plan extension and not a sandbox, so it stays out of other extensions' way:
+
+- **Their tools are theirs.** Read-only turns block only Pi's own `edit`, `write` and `bash`. AY-PI never changes the active tool list, so tools that other extensions add or switch off stay as they set them.
+- **Their turns are theirs.** When another extension starts a turn (a goal loop, a subagent result, a custom message), AY-PI does not classify it, scope it or add instructions. It only routes it, on the last tier.
+- **Subagents are the main agent's helpers.** The main agent's turn decides; a subagent just does the task it was given. In a Pi started by AY-PI's Pi (a subagent process), AY-PI adds no commands, decisions, instructions or tool scoping. If the subagent inherited `ay-pi/auto`, it runs on the main agent's current tier. (Subagents that run inside the same Pi process are not told apart.)
+- **Using a plan extension?** (Plannotator, a `/plan` mode, ...) Set `"scope": "routing"`. AY-PI then only picks the tier and model: no instructions, no tool scoping, no `## Plan` capture, so your plan extension runs its own flow.
+- **Two `/plan` commands?** When another extension registers the same command, Pi renames both (`/plan:1`, `/plan:2`) and AY-PI warns you at startup. Rename AY-PI's or turn it off in `ay-pi.json`, then `/reload`:
+
+```json
+{
+  "scope": "routing",
+  "commands": { "plan": "ay-plan", "review": false }
+}
+```
+
+In auto mode the thinking level follows the behavior (low for CHAT, high for PLAN), so it can differ from a level another extension set.
+
 ## Reference
 
 ### Behaviors
@@ -204,7 +223,7 @@ AY-PI suggests the high tier (openai-codex/gpt-6-astra) for this PLAN request.
 | `PLAN` | Designing work before coding | high | no |
 | `CODE` | Implementing, fixing, refactoring, tests | medium | yes |
 
-"Cannot change files" means `edit`, `write` and `bash` are switched off for that turn.
+"Cannot change files" means Pi's `edit`, `write` and `bash` tools are blocked for that turn. AY-PI is a router, not a sandbox: tools from other extensions are left to those extensions.
 
 ### Commands
 
@@ -253,7 +272,9 @@ Each decision is stored in the session as an `ay-pi.decision` entry, so you can 
 
 - Models are `provider/model`, as shown in `/model`.
 - `classifier`: `auto`, `off`, or a specific `provider/model`.
-- A trusted project can override keys in `.pi/ay-pi.json`.
+- `scope`: `full` (default) or `routing`, see [Working with other extensions](#working-with-other-extensions).
+- `commands`: rename a behavior command (`"plan": "ay-plan"`) or turn it off (`"plan": false`). Read from this file only; `/reload` applies it.
+- A trusted project can override keys in `.pi/ay-pi.json` (except `commands`).
 
 </details>
 
@@ -266,6 +287,8 @@ Each decision is stored in the session as an `ay-pi.decision` entry, so you can 
 | `AY-PI: no tier models configured yet` | Add models with `/ay-pi add low`, `medium`, `high` |
 | `Classifier: none` in `/ay-pi` | Run `/login` → TypeSafe, then check `/ay-pi jev` |
 | The answer came from another tier than expected | Look for `low→medium` in the footer: that tier is empty or unusable |
+| AY-PI warns that `/plan` was renamed to `/plan:1` | Another extension registers `/plan` too: set `"commands": { "plan": "ay-plan" }` (or `false`) and `/reload` |
+| A plan extension's flow is replaced by AY-PI's `## Plan` | Set `"scope": "routing"` |
 
 ## Development
 

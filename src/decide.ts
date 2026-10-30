@@ -39,10 +39,25 @@ export interface DecideInput {
 export interface Decision {
   behavior: Behavior;
   tier: Tier;
-  source: "command" | "plan" | "classifier" | "default";
+  /** "extension": another extension started the turn; AY-PI only routes it. */
+  source: "command" | "plan" | "classifier" | "default" | "extension";
   reason: string;
   /** Inject the pending plan into this turn. */
   usePlan: boolean;
+}
+
+/**
+ * A turn another extension started (a goal loop, a subagent result, ...). That extension owns it:
+ * no classifier, no tool scoping, no instructions. Routing keeps the last tier.
+ */
+export function extensionTurn(previous: Decision | undefined): Decision {
+  return {
+    behavior: previous?.behavior ?? SAFE_DEFAULT.behavior,
+    tier: previous?.tier ?? SAFE_DEFAULT.tier,
+    source: "extension",
+    reason: "turn started by another extension",
+    usePlan: false,
+  };
 }
 
 export function decide(input: DecideInput): Decision {

@@ -61,27 +61,15 @@ export const PROFILES: Record<Behavior, Profile> = {
 /** Used when nothing tells us what the request is: a capable model that cannot change files. */
 export const SAFE_DEFAULT = { behavior: "CHAT", tier: "medium" } as const satisfies { behavior: Behavior; tier: Tier };
 
-/** Tools that can change the workspace. Read-only behaviors run without them. */
+/**
+ * Pi's built-in tools that can change the workspace. Read-only behaviors block them.
+ * Tools from other extensions are theirs to govern: AY-PI is a router, not a sandbox.
+ */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set(["edit", "write", "bash", "powershell"]);
 
-/** Pi's built-in tools that only read. */
-export const READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
-
-/** What a read-only turn needs to know about a tool (a subset of Pi's ToolInfo). */
-export interface ToolTraits {
-  annotations?: { readOnlyHint?: boolean };
-  reachesTools?: unknown;
-}
-
-/**
- * Whether a read-only turn may call this tool. Extension and MCP tools pass only when they
- * declare `readOnlyHint`. Tools that run other tools (codemode, tool_search) pass, because
- * each call they make is checked again. Unknown tools are blocked.
- */
-export function readOnlyAllows(name: string, tool: ToolTraits | undefined): boolean {
-  if (WRITE_TOOLS.has(name)) return false;
-  if (READ_TOOLS.has(name)) return true;
-  return tool?.annotations?.readOnlyHint === true || tool?.reachesTools !== undefined;
+/** Whether a turn with this behavior blocks the tool. */
+export function blocksTool(behavior: Behavior, tool: string): boolean {
+  return !PROFILES[behavior].canWrite && WRITE_TOOLS.has(tool);
 }
 
 export function shiftTier(tier: Tier, by: number): Tier {
@@ -104,5 +92,6 @@ export function extractPlan(answer: string): string | undefined {
 
 /** The static block appended to the system prompt. Depends only on the behavior, so it stays cache-stable. */
 export function behaviorInstructions(behavior: Behavior): string {
-  return `AY-PI mode: ${behavior}.\n${PROFILES[behavior].instructions}`;
+  const blocked = PROFILES[behavior].canWrite ? "" : "\nThe edit, write and bash tools are blocked in this turn.";
+  return `AY-PI mode: ${behavior}.\n${PROFILES[behavior].instructions}${blocked}`;
 }

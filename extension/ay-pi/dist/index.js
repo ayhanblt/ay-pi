@@ -39,11 +39,8 @@ var PROFILES = {
 };
 var SAFE_DEFAULT = { behavior: "CHAT", tier: "medium" };
 var WRITE_TOOLS = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
-var READ_TOOLS = /* @__PURE__ */ new Set(["read", "grep", "find", "ls"]);
-function readOnlyAllows(name, tool) {
-  if (WRITE_TOOLS.has(name)) return false;
-  if (READ_TOOLS.has(name)) return true;
-  return tool?.annotations?.readOnlyHint === true || tool?.reachesTools !== void 0;
+function blocksTool(behavior, tool) {
+  return !PROFILES[behavior].canWrite && WRITE_TOOLS.has(tool);
 }
 function shiftTier(tier, by) {
   const index = Math.min(Math.max(TIERS.indexOf(tier) + by, 0), TIERS.length - 1);
@@ -57,8 +54,9 @@ function extractPlan(answer) {
   return start === -1 ? void 0 : answer.slice(start).trim();
 }
 function behaviorInstructions(behavior) {
+  const blocked = PROFILES[behavior].canWrite ? "" : "\nThe edit, write and bash tools are blocked in this turn.";
   return `AY-PI mode: ${behavior}.
-${PROFILES[behavior].instructions}`;
+${PROFILES[behavior].instructions}${blocked}`;
 }
 
 // src/models.ts
@@ -180,12 +178,23 @@ var COMMANDS = {
   plan: "PLAN",
   code: "CODE"
 };
+function renamedCommands(available, ours) {
+  const renamed = new Set(available.filter((name) => /:\d+$/.test(name)).map((name) => name.replace(/:\d+$/, "")));
+  return ours.filter((name) => renamed.has(name));
+}
+function commandNames(overrides) {
+  return Object.entries(COMMANDS).flatMap(([name, behavior]) => {
+    const override = overrides[name];
+    if (override === false) return [];
+    return [[override ?? name, behavior]];
+  });
+}
 
 // src/config.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 function defaultConfig() {
-  return { tiers: { low: [], medium: [], high: [] }, classifier: "auto" };
+  return { tiers: { low: [], medium: [], high: [] }, classifier: "auto", scope: "full", commands: {} };
 }
 function parseConfig(raw, source) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -209,6 +218,22 @@ function parseConfig(raw, source) {
     if (typeof input.classifier !== "string") throw new Error(`${source}: "classifier" must be a string`);
     result.classifier = input.classifier;
   }
+  if (input.scope !== void 0) {
+    if (input.scope !== "full" && input.scope !== "routing") throw new Error(`${source}: "scope" must be "full" or "routing"`);
+    result.scope = input.scope;
+  }
+  if (input.commands !== void 0) {
+    if (typeof input.commands !== "object" || input.commands === null) throw new Error(`${source}: "commands" must be an object`);
+    const commands = {};
+    for (const [key, value] of Object.entries(input.commands)) {
+      if (!(key in COMMANDS)) throw new Error(`${source}: unknown command "${key}" (use ${Object.keys(COMMANDS).join(", ")})`);
+      if (value !== false && (typeof value !== "string" || !/^[a-z][a-z0-9-]*$/.test(value))) {
+        throw new Error(`${source}: commands.${key} must be false or a command name like "ay-${key}"`);
+      }
+      commands[key] = value;
+    }
+    result.commands = commands;
+  }
   return result;
 }
 function readFile(path) {
@@ -218,7 +243,9 @@ function readFile(path) {
 function merge(config, part) {
   return {
     tiers: { ...config.tiers, ...part.tiers },
-    classifier: part.classifier ?? config.classifier
+    classifier: part.classifier ?? config.classifier,
+    scope: part.scope ?? config.scope,
+    commands: { ...config.commands, ...part.commands }
   };
 }
 function loadConfig(paths) {
@@ -227,8 +254,10 @@ function loadConfig(paths) {
 function updateUserConfig(path, change) {
   const config = merge(defaultConfig(), readFile(path));
   change(config);
+  const { scope, commands, ...rest } = config;
+  const file = { ...rest, ...scope !== "full" && { scope }, ...Object.keys(commands).length > 0 && { commands } };
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}
+  writeFileSync(path, `${JSON.stringify(file, null, 2)}
 `);
   return config;
 }
@@ -236,6 +265,15 @@ function updateUserConfig(path, change) {
 // src/decide.ts
 var WRITE_CONFIDENCE = 0.8;
 var TASK_CONFIDENCE = 0.5;
+function extensionTurn(previous) {
+  return {
+    behavior: previous?.behavior ?? SAFE_DEFAULT.behavior,
+    tier: previous?.tier ?? SAFE_DEFAULT.tier,
+    source: "extension",
+    reason: "turn started by another extension",
+    usePlan: false
+  };
+}
 function decide(input) {
   const decision = climb(input);
   return input.pinnedTier ? { ...decision, tier: input.pinnedTier, reason: `${decision.reason}; tier pinned` } : decision;
@@ -276,6 +314,8 @@ function climb({ command, hasPendingPlan, verdict }) {
 var VIRTUAL = { provider: "ay-pi", id: "auto" };
 var STATE_ENTRY = "ay-pi.state";
 var DECISION_ENTRY = "ay-pi.decision";
+var PID_ENV = "AY_PI_PID";
+var TIER_ENV = "AY_PI_TIER";
 function ayPi(pi) {
   let config = defaultConfig();
   let session = {};
@@ -284,7 +324,22 @@ function ayPi(pi) {
   let lastRouted;
   let routed;
   let lastSuggestion;
+  const extensionPrompts = [];
   const userConfigPath = () => join(getAgentDir(), "ay-pi.json");
+  const behaviorCommands = (() => {
+    try {
+      return commandNames(loadConfig([userConfigPath()]).commands);
+    } catch {
+      return commandNames({});
+    }
+  })();
+  const codeCommand = behaviorCommands.find(([, behavior]) => behavior === "CODE")?.[0];
+  const approveHint = codeCommand ? `reply with /${codeCommand}` : "reply to approve it";
+  const isRoutingOnly = () => config.scope === "routing";
+  const parentPid = process.env[PID_ENV];
+  const parentTier = process.env[TIER_ENV];
+  const subagentTier = parentPid && parentPid !== String(process.pid) ? parentTier && isTier(parentTier) ? parentTier : "medium" : void 0;
+  process.env[PID_ENV] = String(process.pid);
   function reloadConfig(ctx) {
     const paths = [userConfigPath()];
     if (ctx.isProjectTrusted()) paths.push(join(ctx.cwd, ".pi", "ay-pi.json"));
@@ -315,19 +370,6 @@ function ayPi(pi) {
     if (!model) throw new Error("AY-PI: no usable model. Log in to a provider, then add models with /ay-pi add <tier>.");
     return model;
   }
-  function applyTools(behavior) {
-    const current = pi.getActiveTools();
-    let wanted;
-    if (PROFILES[behavior].canWrite) {
-      wanted = [...current, ...(session.removedTools ?? []).filter((tool) => !current.includes(tool))];
-      session.removedTools = void 0;
-    } else {
-      const removed = current.filter((tool) => WRITE_TOOLS.has(tool));
-      session.removedTools = [.../* @__PURE__ */ new Set([...session.removedTools ?? [], ...removed])];
-      wanted = current.filter((tool) => !WRITE_TOOLS.has(tool));
-    }
-    if (wanted.length !== current.length) pi.setActiveTools(wanted);
-  }
   function suggestInManualMode(ctx, current) {
     if (!hasAnyTierModel(config.tiers)) return;
     const currentRef = ctx.model ? formatModelRef(ctx.model) : void 0;
@@ -342,7 +384,7 @@ function ayPi(pi) {
     );
   }
   function showStatus(ctx) {
-    const mode = isAuto(ctx) ? "auto" : "manual";
+    const mode = (isAuto(ctx) ? "auto" : "manual") + (isRoutingOnly() ? " \xB7 routing only" : "");
     const pin = session.pinnedTier ? " (pinned)" : "";
     if (!decision) {
       ctx.ui.setStatus("ay-pi", `AY-PI ready \xB7 ${session.pinnedTier ?? "auto tier"}${pin} \xB7 ${mode}`);
@@ -350,7 +392,8 @@ function ayPi(pi) {
     }
     const tier = routed?.tier && routed.tier !== decision.tier ? `${decision.tier}\u2192${routed.tier}` : decision.tier;
     const model = isAuto(ctx) && routed ? ` \xB7 ${routed.model}` : "";
-    ctx.ui.setStatus("ay-pi", `AY-PI ${decision.behavior} \xB7 ${tier}${pin} \xB7 ${mode}${model}`);
+    const label = decision.source === "extension" ? "extension turn" : decision.behavior;
+    ctx.ui.setStatus("ay-pi", `AY-PI ${label} \xB7 ${tier}${pin} \xB7 ${mode}${model}`);
   }
   pi.registerVirtualModel({
     provider: VIRTUAL.provider,
@@ -358,82 +401,116 @@ function ayPi(pi) {
     name: "AY-PI Auto",
     route(request, ctx) {
       const current = decision ?? { ...SAFE_DEFAULT, source: "default", reason: "no decision yet", usePlan: false };
-      const thinkingLevel = PROFILES[current.behavior].thinking;
+      const thinkingLevel = subagentTier ? request.thinkingLevel : PROFILES[current.behavior].thinking;
       if (request.reason === "continuation" && request.previous) {
         return { model: request.previous.model, thinkingLevel: request.previous.thinkingLevel ?? thinkingLevel };
       }
-      const tier = request.reason === "direct" ? "low" : current.tier;
+      const tier = request.reason === "direct" ? "low" : subagentTier ?? current.tier;
       const exclude = /* @__PURE__ */ new Set();
       if (request.reason === "retry" && request.failed) exclude.add(formatModelRef(request.failed.model));
       const resolved = resolveTier(ctx, tier, exclude);
       const model = resolved?.model ?? fallbackModel(ctx, request.previous?.model);
       const ref = resolved?.ref ?? formatModelRef(model);
       lastRouted = ref;
-      if (request.reason !== "direct") {
+      if (request.reason !== "direct" && !subagentTier) {
         routed = { tier: resolved?.tier, model: model.id };
         showStatus(ctx);
       }
       return { model, thinkingLevel, state: { tier: resolved?.tier ?? tier, model: ref } };
     }
   });
+  if (subagentTier) {
+    pi.on("session_start", async (_event, ctx) => reloadConfig(ctx));
+    return;
+  }
   pi.on("session_start", async (_event, ctx) => {
     reloadConfig(ctx);
     const saved = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY);
     session = saved?.data ? { ...saved.data } : {};
+    if (session.removedTools?.length) {
+      const active = pi.getActiveTools();
+      pi.setActiveTools([...active, ...session.removedTools.filter((tool) => !active.includes(tool))]);
+      session.removedTools = void 0;
+      saveState();
+    }
     decision = void 0;
     routed = void 0;
+    extensionPrompts.length = 0;
     showStatus(ctx);
+    const ours = behaviorCommands.map(([name]) => name);
+    for (const base of renamedCommands(pi.getCommands().map((info) => info.name), ours)) {
+      ctx.ui.notify(
+        `AY-PI: another extension also registers /${base}, so Pi renamed both to /${base}:1 and /${base}:2. Give AY-PI's another name with "commands": { "${base}": "ay-${base}" } in ay-pi.json, or leave /${base} to the other extension with false, then /reload.`,
+        "warning"
+      );
+    }
     if (isAuto(ctx) && !hasAnyTierModel(config.tiers)) {
       ctx.ui.notify("AY-PI: no tier models configured yet. Add some with /ay-pi add low|medium|high.", "warning");
     }
   });
+  pi.on("input", async (event) => {
+    if (event.source === "extension" && !command) {
+      extensionPrompts.push(event.text);
+      if (extensionPrompts.length > 20) extensionPrompts.shift();
+    }
+    return { action: "continue" };
+  });
   pi.on("before_agent_start", async (event, ctx) => {
-    if (event.messageType !== "user") return {};
-    const explicit = command;
-    command = void 0;
+    const explicit = event.messageType === "user" ? command : void 0;
+    if (event.messageType === "user") command = void 0;
+    const queued = event.messageType === "user" ? extensionPrompts.indexOf(event.prompt) : -1;
+    if (queued !== -1) extensionPrompts.splice(queued, 1);
+    if (event.messageType !== "user" || !explicit && queued !== -1) {
+      decision = extensionTurn(decision);
+      routed = void 0;
+      showStatus(ctx);
+      pi.appendEntry(DECISION_ENTRY, { ...decision, mode: isAuto(ctx) ? "auto" : "manual" });
+      return {};
+    }
+    const routingOnly = isRoutingOnly();
+    const hasPendingPlan = !routingOnly && Boolean(session.pendingPlan);
     let verdict;
     if (!explicit) {
       const classifier = await findClassifier(ctx.modelRegistry, config.classifier);
-      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, Boolean(session.pendingPlan), ctx.signal);
+      if (classifier) verdict = await classify(ctx.modelRegistry, classifier, event.prompt, hasPendingPlan, ctx.signal);
     }
-    decision = decide({
-      command: explicit,
-      hasPendingPlan: Boolean(session.pendingPlan),
-      verdict,
-      pinnedTier: session.pinnedTier
-    });
+    decision = decide({ command: explicit, hasPendingPlan, verdict, pinnedTier: session.pinnedTier });
     const plan = decision.usePlan ? session.pendingPlan : void 0;
     if (plan) session.pendingPlan = void 0;
-    applyTools(decision.behavior);
     if (decision.source === "plan") {
-      ctx.ui.notify("AY-PI: plan approved, implementing it now (write tools on).", "info");
+      ctx.ui.notify("AY-PI: plan approved, implementing it now.", "info");
     }
-    if (decision.source === "default" && session.pendingPlan) {
-      ctx.ui.notify("AY-PI: a plan is waiting. Reply /code to implement it; this turn stays read-only.", "info");
+    if (decision.source === "default" && hasPendingPlan) {
+      ctx.ui.notify(`AY-PI: a plan is waiting. To implement it, ${approveHint}; this turn stays read-only.`, "info");
     }
     if (!isAuto(ctx)) suggestInManualMode(ctx, decision);
+    process.env[TIER_ENV] = decision.tier;
     routed = void 0;
     showStatus(ctx);
-    pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual" });
+    pi.appendEntry(DECISION_ENTRY, { ...decision, verdict, mode: isAuto(ctx) ? "auto" : "manual", ...routingOnly && { scope: "routing" } });
     saveState();
+    if (routingOnly) return {};
     return {
       systemPrompt: `${event.systemPrompt}
 
-${behaviorInstructions(decision.behavior)}`,
+${behaviorInstructions(decision.behavior).replace("reply with /code", approveHint)}`,
       message: plan ? { customType: "ay-pi.plan", content: `Approved plan. Implement it; do not re-plan.
 
 ${plan}`, display: false } : void 0
     };
   });
   pi.on("tool_call", async (event) => {
-    const behavior = (decision ?? SAFE_DEFAULT).behavior;
-    if (PROFILES[behavior].canWrite) return;
-    const tool = pi.getAllTools().find((info) => info.name === event.toolName);
-    if (readOnlyAllows(event.toolName, tool)) return;
-    return { block: true, reason: `AY-PI: this is a read-only ${behavior} turn, so ${event.toolName} is blocked. Ask the user to reply with /code to make changes.` };
+    if (isRoutingOnly()) return;
+    const current = decision ?? { ...SAFE_DEFAULT, source: "default" };
+    if (current.source === "extension" || !blocksTool(current.behavior, event.toolName)) return;
+    const unlock = codeCommand ? `reply with /${codeCommand}` : "ask for the change directly";
+    return {
+      block: true,
+      reason: `AY-PI: this is a read-only ${current.behavior} turn, so ${event.toolName} is blocked. Ask the user to ${unlock} to make changes.`
+    };
   });
   pi.on("agent_end", async (event) => {
-    if (decision?.behavior !== "PLAN") return;
+    if (isRoutingOnly() || decision?.behavior !== "PLAN" || decision.source === "extension") return;
     const plan = [...event.messages].reverse().filter((message) => message.role === "assistant").map(
       (message) => typeof message.content === "string" ? message.content : (message.content ?? []).filter((part) => part?.type === "text").map((part) => part.text).join("\n")
     ).map(extractPlan).find(Boolean);
@@ -442,7 +519,7 @@ ${plan}`, display: false } : void 0
       saveState();
     }
   });
-  for (const [name, behavior] of Object.entries(COMMANDS)) {
+  for (const [name, behavior] of behaviorCommands) {
     pi.registerCommand(name, {
       description: `AY-PI: run this prompt as ${behavior}`,
       handler: async (args, ctx) => {
@@ -483,7 +560,8 @@ ${plan}`, display: false } : void 0
             `Tier: ${session.pinnedTier ? `${session.pinnedTier} (pinned)` : "auto"}`,
             ...TIERS.map((tier) => `  ${tier.padEnd(6)} ${config.tiers[tier].join(", ") || "(empty)"}`),
             `Classifier: ${classifier ? formatModelRef(classifier) : `none (${config.classifier})`}`,
-            `Pending plan: ${session.pendingPlan ? "yes (/code to implement)" : "no"}`,
+            `Scope: ${isRoutingOnly() ? "routing only (tiers and models; tools, instructions and plans are left to other extensions)" : "full"}`,
+            `Pending plan: ${session.pendingPlan ? `yes (${approveHint})` : "no"}`,
             decision ? `Last decision: ${decision.behavior} \xB7 ${decision.tier} \xB7 ${decision.reason}` : "Last decision: -",
             lastRouted ? `Last routed model: ${lastRouted}` : ""
           ];
